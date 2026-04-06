@@ -2,6 +2,7 @@ import { createWebSearchInstructionMessage } from "../../../runtime/context/cont
 import { BaseTaskAgent, type TaskAgentInvoker, type ToolExecutor } from "@kagami/agent-runtime";
 import type { LlmClient } from "../../../../llm/client.js";
 import type { LlmMessage } from "../../../../llm/types.js";
+import { FINALIZE_WEB_SEARCH_TOOL_NAME } from "./tools/finalize-web-search.tool.js";
 
 export type WebSearchTaskInput = {
   question: string;
@@ -27,6 +28,7 @@ export class WebSearchTaskAgent
     super({
       model: llmClient,
       taskTools: taskTools ?? searchTools ?? failMissingTaskTools(),
+      terminalToolNames: [FINALIZE_WEB_SEARCH_TOOL_NAME],
     });
   }
 

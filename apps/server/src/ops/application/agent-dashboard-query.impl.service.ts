@@ -98,11 +98,6 @@ function mapRootAgentSnapshot(input: {
         description: child.description,
       })),
       availableInvokeTools: runtimeSnapshot.session.availableInvokeTools,
-      waiting: {
-        active: runtimeSnapshot.session.waiting.active,
-        deadlineAt: toIsoString(runtimeSnapshot.session.waiting.deadlineAt),
-        resumeStateId: runtimeSnapshot.session.waiting.resumeStateId,
-      },
     },
     queue: {
       pendingEventCount,

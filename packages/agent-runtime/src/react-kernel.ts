@@ -72,7 +72,6 @@ export type ReActRoundResult<
   toolExecutions: ReActToolExecution<TMessage, TExtensionData>[];
   appendedMessages: TMessage[];
   shouldCommit: boolean;
-  shouldContinue: boolean;
 };
 
 export type ReActKernelModelErrorDecision = {
@@ -186,27 +185,6 @@ export class ReActKernel<
           error,
         });
         if (decision?.handled) {
-          if (decision.retry) {
-            return {
-              completion: {
-                message: {
-                  role: "assistant",
-                  content: "",
-                  toolCalls: [],
-                },
-              } as unknown as TCompletion,
-              assistantMessage: {
-                role: "assistant",
-                content: "",
-                toolCalls: [],
-              } as unknown as Extract<TMessage, { role: "assistant" }> & AssistantLikeMessage,
-              toolExecutions: [],
-              appendedMessages: [],
-              shouldCommit: false,
-              shouldContinue: true,
-            };
-          }
-
           return {
             completion: {
               message: {
@@ -223,7 +201,6 @@ export class ReActKernel<
             toolExecutions: [],
             appendedMessages: [],
             shouldCommit: false,
-            shouldContinue: false,
           };
         }
       }
@@ -320,17 +297,6 @@ export class ReActKernel<
         appendedMessages: toolMessages,
         ...(extensionData !== undefined ? { extensionData } : {}),
       });
-
-      if (result.signal === "finish_round") {
-        return {
-          completion,
-          assistantMessage,
-          toolExecutions,
-          appendedMessages,
-          shouldCommit: true,
-          shouldContinue: false,
-        };
-      }
     }
 
     return {
@@ -339,7 +305,6 @@ export class ReActKernel<
       toolExecutions,
       appendedMessages,
       shouldCommit: true,
-      shouldContinue: assistantMessage.toolCalls.length > 0,
     };
   }
 

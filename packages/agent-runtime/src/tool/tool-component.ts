@@ -12,7 +12,6 @@ export type ToolDefinition = {
 };
 
 export type ToolKind = "business" | "control";
-export type ToolSignal = "continue" | "finish_round";
 
 export type ToolContext<TMessage = unknown> = {
   groupId?: string;
@@ -22,7 +21,6 @@ export type ToolContext<TMessage = unknown> = {
 
 export type ToolExecutionResult = {
   content: string;
-  signal: ToolSignal;
 };
 
 export interface ToolComponent<TMessage = unknown> {
@@ -86,24 +84,19 @@ export abstract class ZodToolComponent<
     if (!parsed.success) {
       return {
         content: this.formatInvalidArguments(parsed.error),
-        signal: "continue",
       };
     }
 
     try {
       const result = await this.executeTyped(parsed.data, context);
       if (typeof result === "string") {
-        return {
-          content: result,
-          signal: "continue",
-        };
+        return { content: result };
       }
 
       return result;
     } catch (error) {
       return {
         content: this.formatExecutionError(error),
-        signal: "continue",
       };
     }
   }

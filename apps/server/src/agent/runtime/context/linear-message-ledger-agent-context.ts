@@ -15,19 +15,29 @@ export class LinearMessageLedgerAgentContext implements AgentContext {
   private readonly inner: AgentContext;
   private readonly linearMessageLedgerDao: LinearMessageLedgerDao;
   private readonly runtimeKey: string;
+  private readonly onLedgerAppended?: (count: number) => void;
 
   public constructor({
     inner,
     linearMessageLedgerDao,
     runtimeKey,
+    onLedgerAppended,
   }: {
     inner: AgentContext;
     linearMessageLedgerDao: LinearMessageLedgerDao;
     runtimeKey: string;
+    /**
+     * Called synchronously after each successful ledger insert, with the
+     * number of rows written. Downstream consumers (e.g. StoryLoopAgent's
+     * event queue) can use this as a push signal to re-check their work.
+     * Must not throw.
+     */
+    onLedgerAppended?: (count: number) => void;
   }) {
     this.inner = inner;
     this.linearMessageLedgerDao = linearMessageLedgerDao;
     this.runtimeKey = runtimeKey;
+    this.onLedgerAppended = onLedgerAppended;
   }
 
   public async getSnapshot(): Promise<AgentContextSnapshot> {
@@ -99,7 +109,11 @@ export class LinearMessageLedgerAgentContext implements AgentContext {
         }),
       )
       .filter((entry): entry is LinearMessageLedgerInsert => Boolean(entry));
+    if (entries.length === 0) {
+      return;
+    }
     await this.linearMessageLedgerDao.insertMany(entries);
+    this.onLedgerAppended?.(entries.length);
   }
 }
 

@@ -31,18 +31,33 @@ export abstract class BaseTaskAgent<
 > implements TaskAgent<TInput, TOutput> {
   private readonly kernel: ReActKernel<TMessage, TUsage>;
   private readonly taskTools: ToolExecutor<TMessage>;
+  private readonly terminalToolNames: ReadonlySet<string>;
 
   public constructor({
     kernel,
     model,
     taskTools,
+    terminalToolNames,
   }: {
     kernel?: ReActKernel<TMessage, TUsage>;
     model?: TaskAgentModel<TMessage, TUsage>;
     taskTools: ToolExecutor<TMessage>;
+    /**
+     * Names of the tools whose invocation marks the task as complete.
+     * When the LLM calls any of these tools, the task agent returns its
+     * content to buildResult() and the invoke() loop terminates.
+     *
+     * At least one name is required — a task agent without terminal tools
+     * would loop forever.
+     */
+    terminalToolNames: string[];
   }) {
+    if (terminalToolNames.length === 0) {
+      throw new Error("BaseTaskAgent requires at least one terminalToolName");
+    }
     this.kernel = kernel ?? new ReActKernel({ model: model ?? failMissingTaskAgentModel() });
     this.taskTools = taskTools;
+    this.terminalToolNames = new Set(terminalToolNames);
   }
 
   public async invoke(input: TInput): Promise<TOutput> {
@@ -63,14 +78,16 @@ export abstract class BaseTaskAgent<
         messages.push(roundResult.assistantMessage, ...roundResult.appendedMessages);
       }
 
-      const terminalExecution = roundResult.toolExecutions.find(
-        execution => execution.result.signal === "finish_round",
+      // Check if any of the executed tool calls is a terminal tool.
+      // The first terminal hit provides the result content for buildResult.
+      const terminalExecution = roundResult.toolExecutions.find(execution =>
+        this.terminalToolNames.has(execution.toolCall.name),
       );
-      if (terminalExecution || !roundResult.shouldContinue) {
+      if (terminalExecution) {
         return await this.buildResult({
           input,
           messages,
-          content: terminalExecution?.result.content ?? "",
+          content: terminalExecution.result.content,
         });
       }
     }

@@ -21,7 +21,6 @@ describe("enter tool", () => {
     );
 
     expect(tool.name).toBe("enter");
-    expect(result.signal).toBe("continue");
     expect(JSON.parse(result.content)).toMatchObject({
       ok: true,
       id: "qq_group:group-1",
@@ -34,7 +33,6 @@ describe("enter tool", () => {
     const tool = new EnterTool();
     const result = await tool.execute({}, {});
 
-    expect(result.signal).toBe("continue");
     expect(JSON.parse(result.content)).toMatchObject({
       ok: false,
       error: "INVALID_ARGUMENTS",

@@ -7,7 +7,6 @@ describe("summary tool", () => {
 
     await expect(tool.execute({ summary: "  需要保留的摘要  " }, {})).resolves.toEqual({
       content: "需要保留的摘要",
-      signal: "continue",
     });
   });
 
@@ -16,7 +15,6 @@ describe("summary tool", () => {
 
     await expect(tool.execute({ summary: "" }, {})).resolves.toEqual({
       content: "",
-      signal: "continue",
     });
   });
 });

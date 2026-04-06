@@ -79,7 +79,6 @@ describe("invoke tool", () => {
       groupId: "group-1",
       message: "hello group",
     });
-    expect(result.signal).toBe("continue");
     expect(JSON.parse(result.content)).toMatchObject({
       ok: true,
       chatType: "group",
@@ -120,7 +119,6 @@ describe("invoke tool", () => {
       userId: "user-1",
       message: "hello private",
     });
-    expect(result.signal).toBe("continue");
     expect(JSON.parse(result.content)).toMatchObject({
       ok: true,
       chatType: "private",
@@ -153,7 +151,6 @@ describe("invoke tool", () => {
     );
 
     expect(agentMessageService.sendGroupMessage).not.toHaveBeenCalled();
-    expect(result.signal).toBe("continue");
     expect(JSON.parse(result.content)).toMatchObject({
       ok: false,
       error: "INVOKE_TOOL_NOT_AVAILABLE",
@@ -192,7 +189,6 @@ describe("invoke tool", () => {
       } as Parameters<typeof tool.execute>[1],
     );
 
-    expect(result.signal).toBe("continue");
     expect(JSON.parse(result.content)).toMatchObject({
       ok: true,
       thought: "先发会呆",
@@ -234,7 +230,6 @@ describe("invoke tool", () => {
     expect(openIthomeArticle).toHaveBeenCalledWith({
       articleId: 123,
     });
-    expect(result.signal).toBe("continue");
     expect(JSON.parse(result.content)).toMatchObject({
       ok: true,
       kind: "ithome_article",
@@ -273,7 +268,6 @@ describe("invoke tool", () => {
       } as Parameters<typeof tool.execute>[1],
     );
 
-    expect(result.signal).toBe("continue");
     expect(JSON.parse(result.content)).toMatchObject({
       ok: false,
       error: "ARTICLE_NOT_FOUND",
@@ -311,7 +305,6 @@ describe("invoke tool", () => {
       } as Parameters<typeof tool.execute>[1],
     );
 
-    expect(result.signal).toBe("continue");
     expect(JSON.parse(result.content)).toMatchObject({
       ok: false,
       error: "INVOKE_TOOL_NOT_FOUND",

@@ -1,5 +1,5 @@
 import type { LoopAgent } from "./loop-agent.js";
-import type { LoopAgentEventsConsumedSummary, LoopAgentExtension } from "./loop-agent-extension.js";
+import type { LoopAgentExtension } from "./loop-agent-extension.js";
 import type {
   AssistantLikeMessage,
   ReActKernel,
@@ -7,17 +7,27 @@ import type {
   ReActRoundResult,
 } from "./react-kernel.js";
 
-type BaseLoopAgentTickSummary<
-  TMessage extends { role: string },
-  TCompletion extends {
-    message: Extract<TMessage, { role: "assistant" }> & AssistantLikeMessage;
-  },
-  TExtensionData,
-> = {
-  didRunRound: boolean;
-  roundResult: ReActRoundResult<TMessage, TCompletion, TExtensionData> | null;
-};
-
+/**
+ * BaseLoopAgent: a minimal single-layer infinite loop agent.
+ *
+ * The loop is conceptually:
+ *
+ *   while (!stopRequested) {
+ *     await runOnce();
+ *   }
+ *
+ * `runOnce` is abstract. Subclasses decide what "one iteration" means. The
+ * canonical pattern is: drain any pending events into the context, then run
+ * one ReAct round. Inside that round, tools may block on an EventQueue —
+ * this is how the agent "pauses" when there is nothing to do.
+ *
+ * There is no tick, no polling, no "sleep between iterations". If the loop
+ * appears idle, it is because a tool is internally blocking on a producer.
+ *
+ * The helper `runReactRound()` is provided for subclasses that want the
+ * standard orchestration of onBeforeRound / onAfterRound / onAfterCommit
+ * extension hooks around a single kernel round.
+ */
 export abstract class BaseLoopAgent<
   TMessage extends { role: string },
   TUsage extends string,
@@ -28,23 +38,21 @@ export abstract class BaseLoopAgent<
   TLoopExtensionContext = void,
 > implements LoopAgent {
   private readonly kernel: ReActKernel<TMessage, TUsage, TCompletion, TExtensionData>;
-  private readonly extensions: LoopAgentExtension<
+  protected readonly extensions: LoopAgentExtension<
     TLoopExtensionContext,
     TMessage,
     TUsage,
     TCompletion,
     TExtensionData
   >[];
-  private readonly sleep: (ms: number) => Promise<void>;
   private startPromise: Promise<void> | null = null;
-  private activeTickPromise: Promise<unknown> | null = null;
+  private activeRunOncePromise: Promise<void> | null = null;
   private initialized = false;
-  private stopRequested = false;
+  protected stopRequested = false;
 
   protected constructor({
     kernel,
     extensions,
-    sleep,
   }: {
     kernel: ReActKernel<TMessage, TUsage, TCompletion, TExtensionData>;
     extensions?: LoopAgentExtension<
@@ -54,11 +62,9 @@ export abstract class BaseLoopAgent<
       TCompletion,
       TExtensionData
     >[];
-    sleep?: (ms: number) => Promise<void>;
   }) {
     this.kernel = kernel;
     this.extensions = extensions ?? [];
-    this.sleep = sleep ?? defaultSleep;
   }
 
   public async start(): Promise<void> {
@@ -81,22 +87,83 @@ export abstract class BaseLoopAgent<
 
   public async stop(): Promise<void> {
     this.stopRequested = true;
+    // Wake the loop if it's blocking inside a tool that awaits an event queue.
+    this.onStopRequested();
     const startPromise = this.startPromise;
     if (!startPromise) {
       return;
     }
-
     await startPromise.catch(() => undefined);
   }
 
+  /**
+   * Subclass hook: called when stop() is invoked. Must synchronously push
+   * something onto whatever queue(s) the agent's blocking tools await, so
+   * the blocked tool unblocks and the round can end promptly. Default: no-op.
+   */
+  protected onStopRequested(): void {}
+
   protected abstract initializeHostIfNeeded(): Promise<void>;
   protected abstract createLoopExtensionContext(): TLoopExtensionContext;
-  protected abstract beforeTick(): Promise<LoopAgentEventsConsumedSummary | void>;
-  protected abstract shouldRunRound(): Promise<boolean>;
+
+  /**
+   * One iteration of the main loop. The canonical implementation is:
+   *   1. drain any pending events into the agent context
+   *   2. call runReactRound() to execute a single LLM+tools round
+   * Inside the round, a blocking tool (e.g. `wait`) may await an event queue.
+   *
+   * Subclasses MUST implement this.
+   */
+  protected abstract runOnce(): Promise<void>;
+
   protected abstract buildRoundInput(): Promise<ReActKernelRunRoundInput<TMessage, TUsage> | null>;
   protected abstract commitRoundResult(
     result: ReActRoundResult<TMessage, TCompletion, TExtensionData>,
   ): Promise<void>;
+
+  /**
+   * Helper: run one React round with all extension hooks. Subclasses call
+   * this from within runOnce() when they want to actually call the LLM.
+   *
+   * Returns the round result (or null if buildRoundInput returned null,
+   * meaning the round was skipped).
+   */
+  protected async runReactRound(): Promise<ReActRoundResult<
+    TMessage,
+    TCompletion,
+    TExtensionData
+  > | null> {
+    const context = this.createLoopExtensionContext();
+    for (const extension of this.extensions) {
+      await extension.onBeforeRound?.(context);
+    }
+
+    const roundInput = await this.buildRoundInput();
+    if (!roundInput) {
+      return null;
+    }
+
+    const roundResult = await this.executeRound(roundInput);
+    for (const extension of this.extensions) {
+      await extension.onAfterRound?.({
+        context,
+        roundInput,
+        result: roundResult,
+      });
+    }
+
+    if (roundResult.shouldCommit) {
+      await this.commitRoundResult(roundResult);
+      for (const extension of this.extensions) {
+        await extension.onAfterCommit?.({
+          context,
+          result: roundResult,
+        });
+      }
+    }
+
+    return roundResult;
+  }
 
   protected async executeRound(
     input: ReActKernelRunRoundInput<TMessage, TUsage>,
@@ -104,23 +171,16 @@ export abstract class BaseLoopAgent<
     return await this.kernel.runRound(input);
   }
 
-  protected async afterTick(
-    summary: BaseLoopAgentTickSummary<TMessage, TCompletion, TExtensionData>,
-  ): Promise<number | void> {
-    void summary;
-  }
-
   protected async onUnhandledError(error: unknown): Promise<void> {
     throw error;
   }
 
-  protected async waitForActiveTick(): Promise<void> {
-    const activeTickPromise = this.activeTickPromise;
-    if (!activeTickPromise) {
+  protected async waitForActiveRunOnce(): Promise<void> {
+    const activeRunOncePromise = this.activeRunOncePromise;
+    if (!activeRunOncePromise) {
       return;
     }
-
-    await activeTickPromise.catch(() => undefined);
+    await activeRunOncePromise.catch(() => undefined);
   }
 
   protected async ensureInitialized(): Promise<void> {
@@ -148,14 +208,14 @@ export abstract class BaseLoopAgent<
       await this.ensureInitialized();
 
       while (!this.stopRequested) {
-        const tickPromise = this.runSingleTick();
-        this.activeTickPromise = tickPromise;
+        const runOncePromise = this.runOnce();
+        this.activeRunOncePromise = runOncePromise;
 
         try {
-          await tickPromise;
+          await runOncePromise;
         } finally {
-          if (this.activeTickPromise === tickPromise) {
-            this.activeTickPromise = null;
+          if (this.activeRunOncePromise === runOncePromise) {
+            this.activeRunOncePromise = null;
           }
         }
       }
@@ -179,79 +239,4 @@ export abstract class BaseLoopAgent<
       throw error;
     }
   }
-
-  protected async runSingleTick(): Promise<
-    BaseLoopAgentTickSummary<TMessage, TCompletion, TExtensionData>
-  > {
-    let roundResult: ReActRoundResult<TMessage, TCompletion, TExtensionData> | null = null;
-    let didRunRound = false;
-
-    const beforeTickSummary = (await this.beforeTick()) ?? {
-      shouldTriggerRound: false,
-    };
-    const context = this.createLoopExtensionContext();
-    for (const extension of this.extensions) {
-      await extension.onAfterEventsConsumed?.({
-        context,
-        summary: beforeTickSummary,
-      });
-    }
-    if (this.stopRequested) {
-      return {
-        didRunRound,
-        roundResult,
-      };
-    }
-
-    if (await this.shouldRunRound()) {
-      for (const extension of this.extensions) {
-        await extension.onBeforeRound?.(context);
-      }
-
-      const roundInput = await this.buildRoundInput();
-      if (roundInput) {
-        roundResult = await this.executeRound(roundInput);
-        for (const extension of this.extensions) {
-          await extension.onAfterRound?.({
-            context,
-            roundInput,
-            result: roundResult,
-          });
-        }
-        if (roundResult.shouldCommit) {
-          await this.commitRoundResult(roundResult);
-          for (const extension of this.extensions) {
-            await extension.onAfterCommit?.({
-              context,
-              result: roundResult,
-            });
-          }
-        }
-        didRunRound = true;
-      }
-    }
-
-    if (!didRunRound) {
-      for (const extension of this.extensions) {
-        await extension.onIdle?.(context);
-      }
-    }
-
-    const sleepMs = await this.afterTick({
-      didRunRound,
-      roundResult,
-    });
-    if (!this.stopRequested && sleepMs && sleepMs > 0) {
-      await this.sleep(sleepMs);
-    }
-
-    return {
-      didRunRound,
-      roundResult,
-    };
-  }
-}
-
-async function defaultSleep(ms: number): Promise<void> {
-  await new Promise(resolve => setTimeout(resolve, ms));
 }

@@ -22,7 +22,6 @@ describe("open_ithome_article tool", () => {
     );
 
     expect(tool.name).toBe(OPEN_ITHOME_ARTICLE_TOOL_NAME);
-    expect(result.signal).toBe("continue");
     expect(JSON.parse(result.content)).toMatchObject({
       ok: true,
       articleId: 123,

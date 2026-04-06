@@ -184,7 +184,6 @@ describe("RootAgentSession", () => {
     expect(session.getState()).toEqual({
       focusedStateId: "portal",
       stateStack: ["portal"],
-      waiting: null,
     });
     expect(lastMessage?.content).toContain("<system_reminder>");
     expect(lastMessage?.content).toContain("你进入了 门户 节点");
@@ -215,7 +214,6 @@ describe("RootAgentSession", () => {
     expect(session.getState()).toEqual({
       focusedStateId: "qq_group:group-1",
       stateStack: ["portal", "qq_group:group-1"],
-      waiting: null,
     });
     expect(session.getCurrentGroupId()).toBe("group-1");
     expect(session.getAvailableInvokeTools()).toEqual(["send_message"]);
@@ -238,7 +236,6 @@ describe("RootAgentSession", () => {
     expect(session.getState()).toEqual({
       focusedStateId: "portal",
       stateStack: ["portal"],
-      waiting: null,
     });
     const snapshot = await context.getSnapshot();
     expect(
@@ -273,109 +270,10 @@ describe("RootAgentSession", () => {
     expect(reminderMessages.at(-1)?.content).toContain("未读 1 条消息");
   });
 
-  it("should treat wait as an overlay and restore the focused state after timeout", async () => {
-    const context = new DefaultAgentContext({
-      systemPromptFactory: () => "system-prompt",
-    });
-    const session = createSession({ context });
-
-    await session.initializeContext();
-    await session.enter({ id: "zone_out" });
-    await applyPostToolEffects(context, await session.flushPendingPostToolEffects());
-    await session.wait({
-      deadlineAt: new Date("2026-03-30T12:05:00.000Z"),
-    });
-
-    expect(session.getState()).toEqual({
-      focusedStateId: "zone_out",
-      stateStack: ["portal", "zone_out"],
-      waiting: {
-        deadlineAt: new Date("2026-03-30T12:05:00.000Z"),
-        resumeStateId: "zone_out",
-      },
-    });
-
-    const result = await session.finishWaitingIfExpired(new Date("2026-03-30T12:05:01.000Z"));
-    const flushResult = await session.flushPendingIncomingEffects();
-
-    expect(result).toEqual({
-      shouldTriggerRound: true,
-    });
-    expect(flushResult).toEqual({
-      shouldTriggerRound: true,
-    });
-    expect(session.getState()).toEqual({
-      focusedStateId: "zone_out",
-      stateStack: ["portal", "zone_out"],
-      waiting: null,
-    });
-
-    const snapshot = await context.getSnapshot();
-    expect(
-      snapshot.messages.some(
-        message =>
-          typeof message.content === "string" &&
-          message.content.includes("等待自然结束了") &&
-          message.content.includes("神游"),
-      ),
-    ).toBe(true);
-    expect(
-      snapshot.messages.some(
-        message =>
-          typeof message.content === "string" &&
-          message.content.includes("<system_reminder>") &&
-          message.content.includes("你进入了 神游 节点"),
-      ),
-    ).toBe(true);
-  });
-
-  it("should show group name when wait is interrupted by a group message", async () => {
-    const context = new DefaultAgentContext({
-      systemPromptFactory: () => "system-prompt",
-    });
-    const session = createSession({ context });
-
-    await session.initializeContext();
-    await session.enter({ id: "zone_out" });
-    await applyPostToolEffects(context, await session.flushPendingPostToolEffects());
-    await session.wait({
-      deadlineAt: new Date("2026-03-30T12:05:00.000Z"),
-    });
-
-    const result = await session.consumeIncomingEvent(createGroupEvent("hello", "group-1"));
-    const flushResult = await session.flushPendingIncomingEffects();
-
-    expect(result).toEqual({
-      shouldTriggerRound: true,
-    });
-    expect(flushResult).toEqual({
-      shouldTriggerRound: true,
-    });
-
-    const snapshot = await context.getSnapshot();
-    expect(
-      snapshot.messages.some(
-        message =>
-          typeof message.content === "string" &&
-          message.content.includes("等待被新的外部事件打断了") &&
-          message.content.includes("打断等待的事件：QQ 群 产品群 收到了新消息。"),
-      ),
-    ).toBe(true);
-    expect(
-      snapshot.messages.some(
-        message =>
-          typeof message.content === "string" &&
-          message.content.includes("打断等待的事件：QQ 群 group-1 收到了新消息。"),
-      ),
-    ).toBe(false);
-    expect(
-      snapshot.messages.some(
-        message =>
-          typeof message.content === "string" &&
-          message.content.includes("打断等待的事件：QQ 群 产品群 (group-1) 收到了新消息。"),
-      ),
-    ).toBe(false);
-  });
+  // NOTE: wait-overlay tests removed. Under the new event-driven model the
+  // session has no concept of a waiting state — the wait tool blocks directly
+  // on the event queue, and session state is unchanged while the tool is
+  // blocked. Wait-resume rendering is no longer a session concern.
 
   it("should show unread count instead of preview in cross-state group notifications", async () => {
     const context = new DefaultAgentContext({
@@ -444,12 +342,14 @@ describe("RootAgentSession", () => {
     expect(notificationMessages[0]?.content).not.toContain("hello-2");
   });
 
-  it("should restore persisted waiting snapshot in the current stack + wait overlay shape", async () => {
+  it("should restore persisted stateStack and tolerate legacy waitOverlay field", async () => {
     const context = new DefaultAgentContext({
       systemPromptFactory: () => "system-prompt",
     });
     const session = createSession({ context });
 
+    // Legacy snapshot shape from the old polling design still contained a
+    // waitOverlay field. The new schema tolerates it (ignored on restore).
     session.restorePersistedSnapshot({
       stateStack: ["portal", "qq_group:group-1"],
       waitOverlay: {
@@ -479,24 +379,16 @@ describe("RootAgentSession", () => {
       ],
       privateChats: [],
       ithomeFeedState: null,
-    });
+    } as never);
 
     expect(session.getState()).toEqual({
       focusedStateId: "qq_group:group-1",
       stateStack: ["portal", "qq_group:group-1"],
-      waiting: {
-        deadlineAt: new Date("2026-03-30T12:05:00.000Z"),
-        resumeStateId: "qq_group:group-1",
-      },
     });
 
     const exportedSnapshot = session.exportPersistedSnapshot();
     expect(exportedSnapshot).toMatchObject({
       stateStack: ["portal", "qq_group:group-1"],
-      waitOverlay: {
-        deadlineAt: new Date("2026-03-30T12:05:00.000Z"),
-        resumeStateStack: ["portal", "qq_group:group-1"],
-      },
     });
   });
 

@@ -26,7 +26,6 @@ describe("send_message tool", () => {
       groupId: "987654",
       message: "hello group",
     });
-    expect(result.signal).toBe("continue");
     expect(result.content).toBe(
       JSON.stringify({
         ok: true,
@@ -60,7 +59,6 @@ describe("send_message tool", () => {
       userId: "123456",
       message: "hello friend",
     });
-    expect(result.signal).toBe("continue");
     expect(result.content).toBe(
       JSON.stringify({
         ok: true,
@@ -86,7 +84,6 @@ describe("send_message tool", () => {
     );
 
     expect(agentMessageService.sendGroupMessage).not.toHaveBeenCalled();
-    expect(result.signal).toBe("continue");
     expect(JSON.parse(result.content)).toMatchObject({
       ok: false,
       error: "INVALID_ARGUMENTS",
@@ -108,7 +105,6 @@ describe("send_message tool", () => {
     );
 
     expect(agentMessageService.sendGroupMessage).not.toHaveBeenCalled();
-    expect(result.signal).toBe("continue");
     expect(JSON.parse(result.content)).toMatchObject({
       ok: false,
       error: "CHAT_CONTEXT_UNAVAILABLE",

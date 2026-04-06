@@ -1,8 +1,9 @@
 import type { AgentRuntime, TaskAgent } from "./agent-runtime.js";
 import type { LoopAgent } from "./loop-agent.js";
-import type { LoopAgentEventsConsumedSummary, LoopAgentExtension } from "./loop-agent-extension.js";
+import type { LoopAgentExtension } from "./loop-agent-extension.js";
 import type { Operation } from "./operation.js";
 import { BaseLoopAgent } from "./base-loop-agent.js";
+import { InMemoryEventQueue, type EventQueue } from "./event-queue.js";
 import {
   ReActKernel,
   type ReActKernelExtension,
@@ -38,20 +39,20 @@ import {
   type ToolDefinition,
   type ToolExecutionResult,
   type ToolKind,
-  type ToolSignal,
 } from "./tool/tool-component.js";
 
 export {
   BaseLoopAgent,
   BaseTaskAgent,
+  InMemoryEventQueue,
   ReActKernel,
   TaskAgentRuntime,
   ToolCatalog,
   ToolSet,
   ZodToolComponent,
   type AgentRuntime,
+  type EventQueue,
   type LoopAgent,
-  type LoopAgentEventsConsumedSummary,
   type LoopAgentExtension,
   type TaskAgent,
   type AssistantLikeMessage,
@@ -77,5 +78,4 @@ export {
   type ToolKind,
   type ToolLikeMessage,
   type ToolSetExecutionResult,
-  type ToolSignal,
 };

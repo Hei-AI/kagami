@@ -30,7 +30,6 @@ export class FinalizeWebSearchTool extends ZodToolComponent<
   ): Promise<ToolExecutionResult> {
     return {
       content: input.summary.trim(),
-      signal: "finish_round",
     };
   }
 }

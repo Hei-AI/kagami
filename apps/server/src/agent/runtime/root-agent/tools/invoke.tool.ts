@@ -58,7 +58,6 @@ export class InvokeTool extends ZodToolComponent<typeof InvokeArgumentsSchema> {
           message: "当前会话不可用，暂时无法调用 invoke 子工具。",
           availableTools: [],
         }),
-        signal: "continue",
       };
     }
 
@@ -77,7 +76,6 @@ export class InvokeTool extends ZodToolComponent<typeof InvokeArgumentsSchema> {
           }),
           availableTools,
         }),
-        signal: "continue",
       };
     }
 
@@ -88,15 +86,14 @@ export class InvokeTool extends ZodToolComponent<typeof InvokeArgumentsSchema> {
           ok: false,
           error: "INVOKE_TOOL_NOT_AVAILABLE",
           tool: input.tool,
-          state: state.waiting ? "waiting" : state.focusedStateId,
+          state: state.focusedStateId,
           message: buildInvokeToolUnavailableMessage({
             tool: input.tool,
-            state: state.waiting ? "waiting" : state.focusedStateId,
+            state: state.focusedStateId,
             availableToolDefinitions,
           }),
           availableTools,
         }),
-        signal: "continue",
       };
     }
 

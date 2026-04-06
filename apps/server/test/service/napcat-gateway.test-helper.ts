@@ -213,6 +213,7 @@ export function createAgentEventQueue(): AgentEventQueue & {
     dequeue: vi.fn().mockReturnValue(null),
     size: vi.fn().mockReturnValue(0),
     clear: vi.fn().mockReturnValue(0),
+    waitForEvent: vi.fn().mockResolvedValue(undefined),
   };
 }
 

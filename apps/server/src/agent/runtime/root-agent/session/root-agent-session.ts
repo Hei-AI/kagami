@@ -9,8 +9,6 @@ import {
   createEnterZoneOutMessage,
   createExitZoneOutMessage,
   createStateSystemReminderMessage,
-  createWaitResumeMessage,
-  formatPrivateChatDisplayName,
 } from "../../context/context-message-factory.js";
 import { NotificationAccumulator } from "../notification/notification-accumulator.js";
 import type { Event } from "../../event/event.js";
@@ -51,10 +49,6 @@ export type RootAgentInvokeToolName =
 export type RootAgentSessionState = {
   focusedStateId: RootAgentStateId;
   stateStack: RootAgentStateId[];
-  waiting: {
-    deadlineAt: Date;
-    resumeStateId: RootAgentStateId;
-  } | null;
 };
 
 export type RootAgentPostToolEffects = {
@@ -70,11 +64,6 @@ export type RootAgentSessionDashboardSnapshot = {
     id: RootAgentStateId;
     displayName: string;
   }>;
-  waiting: {
-    active: boolean;
-    deadlineAt: Date | null;
-    resumeStateId: RootAgentStateId | null;
-  };
   children: Array<{
     id: RootAgentStateId;
     displayName: string;
@@ -105,8 +94,6 @@ export type RootAgentSessionController = {
   openIthomeArticle(input: { articleId: number }): Promise<Record<string, unknown>>;
   back(): Promise<Record<string, unknown>>;
   backToPortal?(): Promise<Record<string, unknown>>;
-  wait(input: { deadlineAt: Date }): Promise<Record<string, unknown>>;
-  finishWaitingIfExpired(now: Date): Promise<{ shouldTriggerRound: boolean }>;
 };
 
 type RootAgentSessionDeps = {
@@ -122,13 +109,8 @@ const DEFAULT_NOTIFICATION_TIME_WINDOW_MS = 30_000;
 
 type PortalFeedState = PersistedRootAgentIthomeFeedState;
 
-type WaitOverlay = {
-  deadlineAt: Date;
-  resumeStateStack: RootAgentStateId[];
-};
-
-type FocusReason = "initialize" | "enter" | "resume_back" | "resume_wait";
-type BlurReason = "enter_child" | "back" | "wait";
+type FocusReason = "initialize" | "enter" | "resume_back";
+type BlurReason = "enter_child" | "back";
 
 type RootAgentStateHandleEventResult = {
   shouldTriggerRound: boolean;
@@ -169,7 +151,6 @@ export class RootAgentSession implements RootAgentSessionController {
   private readonly pendingPostToolMessages: LlmMessage[] = [];
   private readonly pendingPostToolEvents: Event[] = [];
   private stateStack: RootAgentStateId[] = ["portal"];
-  private waitOverlay: WaitOverlay | null = null;
   private initialized = false;
   private groupInfoLoaded = false;
   public ithomeFeedState: PortalFeedState | null = null;
@@ -204,12 +185,6 @@ export class RootAgentSession implements RootAgentSessionController {
     return {
       focusedStateId: this.getFocusedStateId(),
       stateStack: [...this.stateStack],
-      waiting: this.waitOverlay
-        ? {
-            deadlineAt: new Date(this.waitOverlay.deadlineAt),
-            resumeStateId: this.waitOverlay.resumeStateStack.at(-1) ?? "portal",
-          }
-        : null,
     };
   }
 
@@ -218,10 +193,6 @@ export class RootAgentSession implements RootAgentSessionController {
   }
 
   public getCurrentChatTarget(): NapcatChatTarget | undefined {
-    if (this.waitOverlay) {
-      return undefined;
-    }
-
     const focusedStateId = this.getFocusedStateId();
     const groupId = parseGroupIdFromStateId(focusedStateId);
     if (groupId) {
@@ -248,10 +219,6 @@ export class RootAgentSession implements RootAgentSessionController {
   }
 
   public getAvailableInvokeTools(): RootAgentInvokeToolName[] {
-    if (this.waitOverlay) {
-      return [];
-    }
-
     const focusedState = this.requireState(this.getFocusedStateId());
     return [...focusedState.getAvailableInvokeTools()];
   }
@@ -273,11 +240,6 @@ export class RootAgentSession implements RootAgentSessionController {
           displayName: state.getDisplayName(),
         };
       }),
-      waiting: {
-        active: this.waitOverlay !== null,
-        deadlineAt: this.waitOverlay ? new Date(this.waitOverlay.deadlineAt) : null,
-        resumeStateId: this.waitOverlay?.resumeStateStack.at(-1) ?? null,
-      },
       children: await Promise.all(
         children.map(async child => ({
           id: child.getId(),
@@ -292,12 +254,6 @@ export class RootAgentSession implements RootAgentSessionController {
   public exportPersistedSnapshot(): CurrentPersistedRootAgentSessionSnapshot {
     return {
       stateStack: [...this.stateStack],
-      waitOverlay: this.waitOverlay
-        ? {
-            deadlineAt: new Date(this.waitOverlay.deadlineAt),
-            resumeStateStack: [...this.waitOverlay.resumeStateStack],
-          }
-        : null,
       groups: this.groupStates.map(groupState => ({
         groupId: groupState.groupId,
         groupInfo: groupState.getGroupInfo(),
@@ -365,7 +321,6 @@ export class RootAgentSession implements RootAgentSessionController {
     this.ithomeFeedState = normalizedSnapshot.ithomeFeedState;
     this.initialized = true;
     this.stateStack = normalizedSnapshot.stateStack;
-    this.waitOverlay = normalizedSnapshot.waitOverlay;
   }
 
   public reset(): void {
@@ -383,7 +338,6 @@ export class RootAgentSession implements RootAgentSessionController {
     this.ithomeFeedState = null;
     this.initialized = false;
     this.stateStack = ["portal"];
-    this.waitOverlay = null;
   }
 
   public async initializeContext(): Promise<void> {
@@ -409,8 +363,12 @@ export class RootAgentSession implements RootAgentSessionController {
       };
     }
 
-    if (this.waitOverlay) {
-      return await this.consumeIncomingEventWhileWaiting(event);
+    if (event.type === "wake") {
+      // Pure wake marker, produced by timers / stop / reset. The act of
+      // dequeuing it already woke any consumer; session does nothing.
+      return {
+        shouldTriggerRound: false,
+      };
     }
 
     return await this.consumeIncomingEventInActiveState(event);
@@ -460,13 +418,6 @@ export class RootAgentSession implements RootAgentSessionController {
   ): Promise<Record<string, unknown>> {
     await this.initializeContext();
 
-    if (this.waitOverlay) {
-      return {
-        ok: false,
-        error: "STATE_TRANSITION_NOT_ALLOWED",
-      };
-    }
-
     const targetStateId = normalizeEnterInputToStateId(input);
     if (!targetStateId) {
       return {
@@ -513,7 +464,7 @@ export class RootAgentSession implements RootAgentSessionController {
   public async openIthomeArticle(input: { articleId: number }): Promise<Record<string, unknown>> {
     await this.initializeContext();
 
-    if (this.waitOverlay || this.getFocusedStateId() !== "ithome") {
+    if (this.getFocusedStateId() !== "ithome") {
       return {
         ok: false,
         error: "STATE_TRANSITION_NOT_ALLOWED",
@@ -563,7 +514,7 @@ export class RootAgentSession implements RootAgentSessionController {
   public async back(): Promise<Record<string, unknown>> {
     await this.initializeContext();
 
-    if (this.waitOverlay || this.stateStack.length <= 1) {
+    if (this.stateStack.length <= 1) {
       return {
         ok: false,
         error: "STATE_TRANSITION_NOT_ALLOWED",
@@ -591,80 +542,9 @@ export class RootAgentSession implements RootAgentSessionController {
     return await this.back();
   }
 
-  public async wait(input: { deadlineAt: Date }): Promise<Record<string, unknown>> {
-    await this.initializeContext();
-
-    if (this.waitOverlay) {
-      return {
-        ok: false,
-        error: "STATE_TRANSITION_NOT_ALLOWED",
-      };
-    }
-
-    const currentState = this.requireState(this.getFocusedStateId());
-    this.pendingPostToolMessages.push(...(await currentState.onBlur({ reason: "wait" })));
-    this.waitOverlay = {
-      deadlineAt: new Date(input.deadlineAt),
-      resumeStateStack: [...this.stateStack],
-    };
-
-    return {
-      ok: true,
-      deadlineAt: input.deadlineAt.toISOString(),
-    };
-  }
-
-  public async finishWaitingIfExpired(now: Date): Promise<{ shouldTriggerRound: boolean }> {
-    await this.initializeContext();
-
-    if (!this.waitOverlay || now.getTime() < this.waitOverlay.deadlineAt.getTime()) {
-      return {
-        shouldTriggerRound: false,
-      };
-    }
-
-    const resumedStateId = await this.resumeFromWait({
-      reason: "timeout",
-    });
-
-    return {
-      shouldTriggerRound: resumedStateId !== null,
-    };
-  }
-
-  private async consumeIncomingEventWhileWaiting(
-    event: Event,
-  ): Promise<{ shouldTriggerRound: boolean }> {
-    const resumedStateId = this.clearWaitOverlay();
-    const consumeResult = await this.consumeIncomingEventInActiveState(event, {
-      skipReminderRefresh: true,
-    });
-
-    if (resumedStateId !== null) {
-      this.pendingIncomingMessages.push(
-        await this.createWaitResumeMessage({
-          reason: "event",
-          resumedStateId,
-          event,
-        }),
-      );
-      this.pendingIncomingMessages.push(
-        ...(await this.renderFocusMessages(resumedStateId, "resume_wait")),
-      );
-    }
-
-    return {
-      shouldTriggerRound: consumeResult.shouldTriggerRound || resumedStateId !== null,
-    };
-  }
-
   private async consumeIncomingEventInActiveState(
     event: Event,
-    options?: {
-      skipReminderRefresh?: boolean;
-    },
   ): Promise<{ shouldTriggerRound: boolean }> {
-    const skipReminderRefresh = options?.skipReminderRefresh ?? false;
     const targetStateId = this.resolveEventStateId(event);
     if (!targetStateId) {
       return {
@@ -703,7 +583,7 @@ export class RootAgentSession implements RootAgentSessionController {
           state: focusedState,
           targetStateId,
         }));
-      if (needsReminderRefresh && !skipReminderRefresh) {
+      if (needsReminderRefresh) {
         this.pendingIncomingMessages.push(await this.createStateReminderMessage(focusedStateId));
         shouldTriggerRound = true;
       }
@@ -726,109 +606,6 @@ export class RootAgentSession implements RootAgentSessionController {
     return {
       shouldTriggerRound,
     };
-  }
-
-  private async resumeFromWait(input: {
-    reason: "timeout" | "event";
-    event?: Event;
-  }): Promise<RootAgentStateId | null> {
-    const resumedStateId = this.clearWaitOverlay();
-    if (resumedStateId === null) {
-      return null;
-    }
-
-    this.pendingIncomingMessages.push(
-      await this.createWaitResumeMessage({
-        reason: input.reason,
-        resumedStateId,
-        event: input.event,
-      }),
-    );
-    this.pendingIncomingMessages.push(
-      ...(await this.renderFocusMessages(resumedStateId, "resume_wait")),
-    );
-
-    return resumedStateId;
-  }
-
-  private clearWaitOverlay(): RootAgentStateId | null {
-    if (!this.waitOverlay) {
-      return null;
-    }
-
-    const resumedStateId = this.waitOverlay.resumeStateStack.at(-1) ?? "portal";
-    this.stateStack = [...this.waitOverlay.resumeStateStack];
-    this.waitOverlay = null;
-    return resumedStateId;
-  }
-
-  private async createWaitResumeMessage(input: {
-    reason: "timeout" | "event";
-    resumedStateId: RootAgentStateId;
-    event?: Event;
-  }): Promise<LlmMessage> {
-    const resumedState = this.requireState(input.resumedStateId);
-    const eventSummary = input.event ? await this.describeWakeEvent(input.event) : undefined;
-    return createWaitResumeMessage({
-      reason: input.reason,
-      resumedStateLabel: resumedState.getDisplayName(),
-      ...(eventSummary ? { eventSummary } : {}),
-    });
-  }
-
-  private async describeWakeEvent(event: Event): Promise<string> {
-    const targetStateId = this.resolveEventStateId(event);
-    if (!targetStateId) {
-      return "收到了新的外部事件";
-    }
-
-    if (event.type === "news_article_ingested") {
-      const feedLabel = this.ithomeFeedState?.label ?? "IT 之家";
-      return `${feedLabel} 有新文章《${event.data.title}》`;
-    }
-
-    if (event.type === "napcat_group_message") {
-      return `${await this.resolveWakeEventGroupLabel(event.data.groupId)} 收到了新消息`;
-    }
-
-    if (event.type === "napcat_private_message") {
-      return `${this.resolveWakeEventPrivateLabel(event.data)} 收到了新消息`;
-    }
-
-    if (event.type === "napcat_friend_list_updated") {
-      return "QQ 好友列表已更新";
-    }
-
-    const targetState = this.resolveState(targetStateId);
-    if (!targetState) {
-      return "收到了新的外部事件";
-    }
-
-    return `${targetState.getDisplayName()} 收到了新消息`;
-  }
-
-  private async resolveWakeEventGroupLabel(groupId: string): Promise<string> {
-    const groupState = this.groupStateById.get(groupId);
-    const cachedGroupName = groupState?.getGroupName();
-    if (cachedGroupName) {
-      return `QQ 群 ${cachedGroupName}`;
-    }
-
-    try {
-      const groupInfo = await this.napcatGatewayService.getGroupInfo({
-        groupId,
-      });
-      groupState?.setGroupInfo(groupInfo);
-
-      const groupName = groupInfo.groupName.trim();
-      if (groupName.length > 0) {
-        return `QQ 群 ${groupName}`;
-      }
-    } catch {
-      // Fallback to groupId-only rendering when group info is unavailable.
-    }
-
-    return `QQ 群 ${groupId}`;
   }
 
   private async renderFocusMessages(
@@ -902,7 +679,7 @@ export class RootAgentSession implements RootAgentSessionController {
         : null;
     }
 
-    if (event.type === "napcat_friend_list_updated") {
+    if (event.type === "napcat_friend_list_updated" || event.type === "wake") {
       return null;
     }
 
@@ -1044,14 +821,6 @@ export class RootAgentSession implements RootAgentSessionController {
     this.privateChatStateByUserId.set(input.userId, privateChatState);
     return privateChatState;
   }
-
-  public resolveWakeEventPrivateLabel(input: {
-    userId: string;
-    nickname: string;
-    remark: string | null;
-  }): string {
-    return `QQ 私聊 ${formatPrivateChatDisplayName(input)}`;
-  }
 }
 
 class PortalState implements RootAgentState {
@@ -1161,10 +930,7 @@ class QqGroupState implements RootAgentState {
   }
 
   public async onFocus(input: { reason: FocusReason }): Promise<LlmMessage[]> {
-    if (input.reason === "resume_wait") {
-      return [];
-    }
-
+    void input;
     const groupState = this.session.groupStateById.get(this.groupId);
     if (!groupState) {
       return [];
@@ -1272,10 +1038,7 @@ class QqPrivateState implements RootAgentState {
   }
 
   public async onFocus(input: { reason: FocusReason }): Promise<LlmMessage[]> {
-    if (input.reason === "resume_wait") {
-      return [];
-    }
-
+    void input;
     const privateChatState = this.session.privateChatStateByUserId.get(this.userId);
     if (!privateChatState) {
       return [];
@@ -1545,7 +1308,6 @@ function normalizePersistedSnapshot(
   privateChatStateByUserId: Map<string, PrivateChatState>,
 ): {
   stateStack: RootAgentStateId[];
-  waitOverlay: WaitOverlay | null;
   groups: CurrentPersistedRootAgentSessionSnapshot["groups"];
   privateChats: CurrentPersistedRootAgentSessionSnapshot["privateChats"];
   ithomeFeedState: PortalFeedState | null;
@@ -1558,20 +1320,9 @@ function normalizePersistedSnapshot(
   const normalizedStack = snapshot.stateStack
     .map(stateId => normalizeStateId(stateId, groupStateById, knownPrivateUserIds))
     .filter((stateId): stateId is RootAgentStateId => stateId !== null);
-  const normalizedResumeStateStack =
-    snapshot.waitOverlay?.resumeStateStack
-      .map(stateId => normalizeStateId(stateId, groupStateById, knownPrivateUserIds))
-      .filter((stateId): stateId is RootAgentStateId => stateId !== null) ?? [];
 
   return {
     stateStack: normalizedStack.length > 0 ? normalizedStack : ["portal"],
-    waitOverlay: snapshot.waitOverlay
-      ? {
-          deadlineAt: new Date(snapshot.waitOverlay.deadlineAt),
-          resumeStateStack:
-            normalizedResumeStateStack.length > 0 ? normalizedResumeStateStack : ["portal"],
-        }
-      : null,
     groups: cloneGroupStates(snapshot.groups),
     privateChats: clonePrivateChatStates(snapshot.privateChats),
     ithomeFeedState: snapshot.ithomeFeedState ? { ...snapshot.ithomeFeedState } : null,

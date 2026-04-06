@@ -18,7 +18,6 @@ export class FinishStoryBatchTool extends ZodToolComponent<typeof FinishStoryBat
   protected async executeTyped(): Promise<ToolExecutionResult> {
     return {
       content: "story batch finished",
-      signal: "finish_round",
     };
   }
 }

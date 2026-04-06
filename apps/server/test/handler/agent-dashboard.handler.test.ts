@@ -37,11 +37,6 @@ describe("AgentDashboardHandler", () => {
             stateStack: [{ id: "portal", displayName: "门户" }],
             children: [],
             availableInvokeTools: [],
-            waiting: {
-              active: false,
-              deadlineAt: null,
-              resumeStateId: null,
-            },
           },
           queue: {
             pendingEventCount: 0,
@@ -102,11 +97,6 @@ describe("AgentDashboardHandler", () => {
             stateStack: [{ id: "portal", displayName: "门户" }],
             children: [],
             availableInvokeTools: [],
-            waiting: {
-              active: false,
-              deadlineAt: null,
-              resumeStateId: null,
-            },
           },
           queue: {
             pendingEventCount: 0,

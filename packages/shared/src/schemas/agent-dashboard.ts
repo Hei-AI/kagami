@@ -7,7 +7,6 @@ export const AgentLoopStateSchema = z.enum([
   "consuming_events",
   "calling_llm",
   "executing_tool",
-  "waiting",
   "crashed",
 ]);
 
@@ -124,13 +123,6 @@ export const RootAgentDashboardSessionSchema = z
     stateStack: z.array(RootAgentDashboardStateStackItemSchema),
     children: z.array(RootAgentDashboardChildStateSchema),
     availableInvokeTools: z.array(z.string().min(1)),
-    waiting: z
-      .object({
-        active: z.boolean(),
-        deadlineAt: z.string().datetime().nullable(),
-        resumeStateId: z.string().min(1).nullable(),
-      })
-      .strict(),
   })
   .strict();
 

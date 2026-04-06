@@ -18,7 +18,6 @@ describe("back tool", () => {
     const result = await tool.execute({}, toolContext);
 
     expect(tool.name).toBe("back");
-    expect(result.signal).toBe("continue");
     expect(JSON.parse(result.content)).toMatchObject({
       ok: true,
       id: "qq_group:group-1",
@@ -41,7 +40,6 @@ describe("back tool", () => {
     const result = await tool.execute({}, toolContext);
 
     expect(tool.name).toBe("back");
-    expect(result.signal).toBe("continue");
     expect(JSON.parse(result.content)).toMatchObject({
       ok: false,
       error: "STATE_TRANSITION_NOT_ALLOWED",

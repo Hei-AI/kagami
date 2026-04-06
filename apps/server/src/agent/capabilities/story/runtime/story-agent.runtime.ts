@@ -1,5 +1,6 @@
 import {
   BaseLoopAgent,
+  type EventQueue,
   type LoopAgentExtension,
   ReActKernel,
   ToolCatalog,
@@ -11,6 +12,7 @@ import {
   type ToolExecutor,
   type ToolSetExecutionResult,
 } from "@kagami/agent-runtime";
+import type { StoryAgentEvent } from "./story-event.js";
 import type {
   AgentContext,
   AgentContextDashboardSummary,
@@ -51,7 +53,6 @@ import {
 } from "../task-agent/tools/rewrite-story.tool.js";
 import { NOOP_METRIC_SERVICE, recordToolCallMetric } from "../../../runtime/tool-call-metric.js";
 
-const DEFAULT_POLL_INTERVAL_MS = 1000;
 const DEFAULT_DASHBOARD_CONTEXT_LIMIT = 40;
 const DEFAULT_DASHBOARD_PREVIEW_LENGTH = 160;
 const logger = new AppLogger({ source: "agent.story-runtime" });
@@ -66,7 +67,6 @@ export type StoryAgentLoopState =
   | "consuming_events"
   | "calling_llm"
   | "executing_tool"
-  | "waiting"
   | "crashed";
 
 export type StoryAgentRuntimeErrorSummary = {
@@ -125,13 +125,13 @@ type StoryLoopAgentDeps = {
   batchSize: number;
   idleFlushMs: number;
   metricService?: MetricService;
-  pollIntervalMs?: number;
   llmRetryBackoffMs?: number;
   now?: () => Date;
   sleep?: (ms: number) => Promise<void>;
   runtimeKey?: string;
   sourceRuntimeKey: string;
   context?: AgentContext;
+  eventQueue: EventQueue<StoryAgentEvent>;
 };
 
 type StoryPendingBatch = {
@@ -187,7 +187,7 @@ class StoryAgentHost {
     runtimeKey,
     sourceRuntimeKey,
     context,
-  }: Omit<StoryLoopAgentDeps, "llmClient" | "storyService" | "pollIntervalMs">) {
+  }: Omit<StoryLoopAgentDeps, "llmClient" | "storyService" | "eventQueue">) {
     this.linearMessageLedgerDao = linearMessageLedgerDao;
     this.snapshotRepository = snapshotRepository;
     this.contextSummaryOperation = contextSummaryOperation;
@@ -330,9 +330,13 @@ class StoryAgentHost {
     }
 
     this.pendingBatch.roundMessages.push(result.assistantMessage, ...result.appendedMessages);
-    const batchFinished =
-      result.toolExecutions.some(execution => execution.result.signal === "finish_round") ||
-      !result.shouldContinue;
+    // Under the new model the kernel runs all tool calls unconditionally, so
+    // "batch finished" is determined purely by whether the LLM invoked the
+    // finish_story_batch tool this round. Any round that includes that tool
+    // is considered terminal for the current batch.
+    const batchFinished = result.toolExecutions.some(
+      execution => execution.toolCall.name === FINISH_STORY_BATCH_TOOL_NAME,
+    );
     if (!batchFinished) {
       return;
     }
@@ -574,14 +578,14 @@ class StoryAgentHost {
 export class StoryLoopAgent extends BaseLoopAgent<LlmMessage, "storyAgent", StoryCompletion> {
   private readonly host: StoryAgentHost;
   private readonly tools: ToolExecutor<LlmMessage>;
-  private readonly pollIntervalMs: number;
+  private readonly eventQueue: EventQueue<StoryAgentEvent>;
 
   public constructor({
     llmClient,
     storyService,
     sleep,
-    pollIntervalMs,
     llmRetryBackoffMs,
+    eventQueue,
     ...rest
   }: StoryLoopAgentDeps) {
     const resolvedSleep = sleep ?? createSleep;
@@ -651,16 +655,15 @@ export class StoryLoopAgent extends BaseLoopAgent<LlmMessage, "storyAgent", Stor
           host,
         }),
       ],
-      sleep: resolvedSleep,
     });
 
     this.host = host;
+    this.eventQueue = eventQueue;
     this.tools = new StoryBatchToolExecutor({
       host,
       storyService,
       toolDefinitions,
     });
-    this.pollIntervalMs = pollIntervalMs ?? DEFAULT_POLL_INTERVAL_MS;
   }
 
   public async run(): Promise<void> {
@@ -669,28 +672,6 @@ export class StoryLoopAgent extends BaseLoopAgent<LlmMessage, "storyAgent", Stor
 
   public async initialize(): Promise<void> {
     await this.ensureInitialized();
-  }
-
-  public async runOnce(): Promise<boolean> {
-    await this.ensureInitialized();
-
-    let didRunRound = false;
-    while (true) {
-      const tickSummary = await this.runSingleTick();
-      if (!tickSummary.didRunRound) {
-        return didRunRound;
-      }
-
-      didRunRound = true;
-      if (this.host.hasPendingBatch()) {
-        continue;
-      }
-
-      const nextBatch = await this.host.preparePendingBatchIfNeeded();
-      if (!nextBatch.shouldTriggerRound) {
-        return true;
-      }
-    }
   }
 
   public async getContextSnapshot(): Promise<AgentContextSnapshot> {
@@ -714,12 +695,31 @@ export class StoryLoopAgent extends BaseLoopAgent<LlmMessage, "storyAgent", Stor
     return undefined;
   }
 
-  protected override async beforeTick(): Promise<{ shouldTriggerRound: boolean }> {
-    return await this.host.preparePendingBatchIfNeeded();
+  protected override onStopRequested(): void {
+    // Unblock any blocking tool awaiting the story event queue so the
+    // current runOnce iteration can finish and the loop can exit.
+    this.eventQueue.enqueue({ type: "wake" });
   }
 
-  protected override async shouldRunRound(): Promise<boolean> {
-    return this.host.hasPendingBatch();
+  protected override async runOnce(): Promise<void> {
+    // Drain any wake / ledger_appended events that accumulated in the queue.
+    // The event payloads themselves are not consumed into the context;
+    // they are pure signals to re-check the ledger state.
+    while (this.eventQueue.dequeue() !== null) {
+      // no-op: we care about the fact that events arrived, not their data
+    }
+
+    // If there's a batch ready (or one becomes ready after checking the
+    // ledger), run a round. Otherwise, block on the event queue until the
+    // ledger writer pushes another event.
+    const prep = await this.host.preparePendingBatchIfNeeded();
+    if (prep.shouldTriggerRound) {
+      await this.runReactRound();
+      return;
+    }
+
+    this.host.transitionTo("idle");
+    await this.eventQueue.waitForEvent();
   }
 
   protected override async buildRoundInput(): Promise<ReActKernelRunRoundInput<
@@ -733,17 +733,6 @@ export class StoryLoopAgent extends BaseLoopAgent<LlmMessage, "storyAgent", Stor
     result: ReActRoundResult<LlmMessage, StoryCompletion>,
   ): Promise<void> {
     await this.host.commitRoundResult(result);
-  }
-
-  protected override async afterTick(input: {
-    didRunRound: boolean;
-    roundResult: ReActRoundResult<LlmMessage, StoryCompletion> | null;
-  }): Promise<number> {
-    void input.roundResult;
-    if (!input.didRunRound) {
-      this.host.transitionTo("idle");
-    }
-    return input.didRunRound ? 0 : this.pollIntervalMs;
   }
 
   protected override async onUnhandledError(error: unknown): Promise<void> {

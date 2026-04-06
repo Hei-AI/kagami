@@ -132,16 +132,12 @@ export type PersistedRootAgentIthomeFeedState = z.infer<
   typeof PersistedRootAgentIthomeFeedStateSchema
 >;
 
-const PersistedRootAgentWaitOverlaySchema = z.object({
-  deadlineAt: DateValueSchema,
-  resumeStateStack: z.array(z.string().min(1)).min(1),
-});
-
-export type PersistedRootAgentWaitOverlay = z.infer<typeof PersistedRootAgentWaitOverlaySchema>;
-
 export const PersistedRootAgentSessionSnapshotSchema = z.object({
   stateStack: z.array(z.string().min(1)).min(1),
-  waitOverlay: PersistedRootAgentWaitOverlaySchema.nullable(),
+  // Legacy field: the old polling-based design persisted a wait overlay
+  // here. The new event-driven design has no concept of a waiting session
+  // state. Accept any value during deserialization and ignore it.
+  waitOverlay: z.unknown().optional(),
   groups: z.array(PersistedRootAgentSessionGroupStateSchema),
   privateChats: z.array(PersistedRootAgentSessionPrivateChatStateSchema).default([]),
   ithomeFeedState: PersistedRootAgentIthomeFeedStateSchema.nullable(),

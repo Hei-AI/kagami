@@ -76,7 +76,6 @@ export class ToolSet<TMessage = unknown> implements ToolExecutor<TMessage> {
       return {
         kind: "business",
         content: JSON.stringify({ error: `Unknown tool: ${name}` }),
-        signal: "continue",
       };
     }
 

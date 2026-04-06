@@ -79,7 +79,6 @@ type RootAgentRuntimeDeps = {
 const DEFAULT_CONTEXT_COMPACTION_TOTAL_TOKEN_THRESHOLD = 150_000;
 const DEFAULT_DASHBOARD_CONTEXT_LIMIT = 40;
 const DEFAULT_DASHBOARD_PREVIEW_LENGTH = 160;
-const IDLE_SLEEP_MS = 10;
 const logger = new AppLogger({ source: "agent.root-agent-runtime" });
 
 type PendingToolPersistence = {
@@ -109,7 +108,6 @@ export type RootAgentLoopState =
   | "consuming_events"
   | "calling_llm"
   | "executing_tool"
-  | "waiting"
   | "crashed";
 
 export type RootAgentRuntimeErrorSummary = {
@@ -221,7 +219,7 @@ class RootAgentHost {
         await this.session.initializeContext();
         this.initialized = true;
         this.touchActivity();
-        this.transitionTo(this.session.getState().waiting ? "waiting" : "idle");
+        this.transitionTo("idle");
       });
     } catch (error) {
       this.recordCrash(error);
@@ -235,14 +233,13 @@ class RootAgentHost {
     await this.runSerializedMutation(async () => {
       await this.context.restorePersistedSnapshot(snapshot.contextSnapshot);
       this.session.restorePersistedSnapshot(snapshot.sessionSnapshot);
-      const waitingTimeoutResult = await this.session.finishWaitingIfExpired(this.now());
       const pendingEffectsResult = await this.session.flushPendingIncomingEffects();
       this.lastWakeReminderAt = cloneDate(snapshot.lastWakeReminderAt);
       this.lastPersistedSnapshotFingerprint = createSnapshotFingerprint(snapshot);
-      if (waitingTimeoutResult.shouldTriggerRound || pendingEffectsResult.shouldTriggerRound) {
+      if (pendingEffectsResult.shouldTriggerRound) {
         this.touchActivity();
       }
-      this.transitionTo(this.session.getState().waiting ? "waiting" : "idle");
+      this.transitionTo("idle");
     });
   }
 
@@ -307,9 +304,7 @@ class RootAgentHost {
     this.loopState = loopState;
   }
 
-  public async consumePendingEvents(input?: {
-    allowWaitingTimeout?: boolean;
-  }): Promise<{ shouldTriggerRound: boolean }> {
+  public async consumePendingEvents(): Promise<{ shouldTriggerRound: boolean }> {
     return await this.runSerializedMutation(async () => {
       this.transitionTo("consuming_events");
       let consumedEventCount = 0;
@@ -324,21 +319,13 @@ class RootAgentHost {
         consumedEventCount += 1;
       }
 
-      const waitingTimeoutResult =
-        input?.allowWaitingTimeout === false
-          ? { shouldTriggerRound: false }
-          : await this.session.finishWaitingIfExpired(this.now());
       const result = await this.session.flushPendingIncomingEffects();
-      if (
-        consumedEventCount > 0 ||
-        waitingTimeoutResult.shouldTriggerRound ||
-        result.shouldTriggerRound
-      ) {
+      if (consumedEventCount > 0 || result.shouldTriggerRound) {
         this.touchActivity();
       }
 
       return {
-        shouldTriggerRound: result.shouldTriggerRound || waitingTimeoutResult.shouldTriggerRound,
+        shouldTriggerRound: result.shouldTriggerRound,
       };
     });
   }
@@ -403,7 +390,7 @@ class RootAgentHost {
       });
       this.lastRoundCompletedAt = this.now();
       this.touchActivity();
-      this.transitionTo(this.session.getState().waiting ? "waiting" : "idle");
+      this.transitionTo("idle");
     });
   }
 
@@ -700,10 +687,6 @@ class SnapshotPersistenceExtension implements LoopAgentExtension<
     await context.host.persistSnapshotIfChanged();
   }
 
-  public async onAfterEventsConsumed(input: { context: RootLoopExtensionContext }): Promise<void> {
-    await input.context.host.persistSnapshotIfChanged();
-  }
-
   public async onBeforeRound(context: RootLoopExtensionContext): Promise<void> {
     await context.host.persistSnapshotIfChanged();
   }
@@ -856,8 +839,7 @@ export class RootLoopAgent extends BaseLoopAgent<
 > {
   private readonly host: RootAgentHost;
   private readonly tools: ToolExecutor<LlmMessage>;
-  private shouldRunRoundFlag = true;
-  private waitingNeedsSleep = false;
+  private readonly eventQueue: AgentEventQueue;
   private pendingResetPromise: Promise<{ resetAt: Date }> | null = null;
 
   public constructor({
@@ -866,6 +848,7 @@ export class RootLoopAgent extends BaseLoopAgent<
     agentTools,
     llmRetryBackoffMs,
     sleep,
+    eventQueue,
     ...rest
   }: RootAgentRuntimeDeps) {
     const resolvedSleep = sleep ?? createSleep;
@@ -873,6 +856,7 @@ export class RootLoopAgent extends BaseLoopAgent<
     const resolvedTools = tools ?? agentTools ?? failMissingTools();
     const host = new RootAgentHost({
       ...rest,
+      eventQueue,
       llmRetryBackoffMs: resolvedRetryBackoffMs,
       sleep: resolvedSleep,
     });
@@ -922,11 +906,11 @@ export class RootLoopAgent extends BaseLoopAgent<
         new ContextCompactionExtension(),
         new SnapshotPersistenceExtension(),
       ],
-      sleep: resolvedSleep,
     });
 
     this.host = host;
     this.tools = resolvedTools;
+    this.eventQueue = eventQueue;
   }
 
   public async run(): Promise<void> {
@@ -949,10 +933,11 @@ export class RootLoopAgent extends BaseLoopAgent<
     }
 
     const resetPromise = (async () => {
-      await this.waitForActiveTick();
+      // Push a wake event so that if the current runOnce is blocked inside
+      // the wait tool, it unblocks and the loop iteration can finish.
+      this.eventQueue.enqueue({ type: "wake" });
+      await this.waitForActiveRunOnce();
 
-      this.shouldRunRoundFlag = false;
-      this.waitingNeedsSleep = false;
       const result = await this.host.resetContext();
       await this.notifyAfterReset();
       return result;
@@ -987,68 +972,38 @@ export class RootLoopAgent extends BaseLoopAgent<
     };
   }
 
-  protected override async beforeTick(): Promise<{ shouldTriggerRound: boolean }> {
-    await this.awaitPendingReset();
-    const consumeResult = await this.host.consumePendingEvents({
-      allowWaitingTimeout: !this.waitingNeedsSleep,
-    });
-    await this.awaitPendingReset();
-    this.shouldRunRoundFlag = this.shouldRunRoundFlag || consumeResult.shouldTriggerRound;
-    return consumeResult;
+  protected override onStopRequested(): void {
+    // Unblock any tool currently awaiting eventQueue.waitForEvent() so the
+    // round can end and the loop can notice stopRequested.
+    this.eventQueue.enqueue({ type: "wake" });
   }
 
-  protected override async shouldRunRound(): Promise<boolean> {
-    if (this.host.getSessionState().waiting) {
-      this.host.transitionTo("waiting");
-      return false;
-    }
+  protected override async runOnce(): Promise<void> {
+    await this.awaitPendingReset();
 
-    if (!this.shouldRunRoundFlag) {
-      this.host.transitionTo("idle");
-      return false;
-    }
+    // Step 1: drain any events in the queue into the context. This is the
+    // moment where wake events get silently consumed (session routes them
+    // to a no-op), napcat messages get routed to their state, etc.
+    await this.host.consumePendingEvents();
+    await this.awaitPendingReset();
 
-    return true;
+    // Step 2: run one ReAct round. The LLM may call blocking tools like
+    // wait / finish_story_batch; those block inside eventQueue.waitForEvent
+    // until a producer (real event or timer-enqueued wake) resolves them.
+    await this.runReactRound();
   }
 
   protected override async buildRoundInput(): Promise<ReActKernelRunRoundInput<
     LlmMessage,
     "agent"
   > | null> {
-    this.shouldRunRoundFlag = false;
     return await this.host.createRoundInput(this.tools);
-  }
-
-  protected override async executeRound(
-    input: ReActKernelRunRoundInput<LlmMessage, "agent">,
-  ): Promise<ReActRoundResult<LlmMessage, RootAgentCompletion, RootAgentToolExecutionData>> {
-    const result = await super.executeRound(input);
-    this.shouldRunRoundFlag = result.shouldContinue || this.shouldRunRoundFlag;
-    return result;
   }
 
   protected override async commitRoundResult(
     result: ReActRoundResult<LlmMessage, RootAgentCompletion, RootAgentToolExecutionData>,
   ): Promise<void> {
     await this.host.commitRoundResult(result, this.tools);
-    this.waitingNeedsSleep = this.host.getSessionState().waiting !== null;
-  }
-
-  protected override async afterTick(input: {
-    didRunRound: boolean;
-    roundResult: ReActRoundResult<
-      LlmMessage,
-      RootAgentCompletion,
-      RootAgentToolExecutionData
-    > | null;
-  }): Promise<number> {
-    if (!this.host.getSessionState().waiting) {
-      this.waitingNeedsSleep = false;
-    } else if (!input.didRunRound) {
-      this.waitingNeedsSleep = false;
-    }
-
-    return input.didRunRound ? 0 : IDLE_SLEEP_MS;
   }
 
   protected override async onUnhandledError(error: unknown): Promise<void> {
@@ -1192,7 +1147,6 @@ function createTemporaryToolFailureResult(input: {
 }): ToolSetExecutionResult {
   return {
     kind: input.kind,
-    signal: "continue",
     content: JSON.stringify({
       ok: false,
       error: "TEMPORARY_TOOL_FAILURE",

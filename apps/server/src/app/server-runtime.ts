@@ -35,8 +35,9 @@ import { initLoggerRuntime, withTraceContext } from "../logger/runtime.js";
 import { DbLogSink } from "../logger/sinks/db-sink.js";
 import { StdoutLogSink } from "../logger/sinks/stdout-sink.js";
 import { createAuthModule } from "../auth/index.js";
-import { ToolCatalog } from "@kagami/agent-runtime";
-import { InMemoryAgentEventQueue } from "../agent/runtime/event/in-memory-agent-event-queue.js";
+import { InMemoryEventQueue, ToolCatalog } from "@kagami/agent-runtime";
+import type { Event } from "../agent/runtime/event/event.js";
+import type { StoryAgentEvent } from "../agent/capabilities/story/runtime/story-event.js";
 import { RootLoopAgent } from "../agent/runtime/root-agent/root-agent-runtime.js";
 import { PrismaRootAgentRuntimeSnapshotRepository } from "../agent/runtime/root-agent/persistence/prisma-root-agent-runtime-snapshot.repository.js";
 import { ROOT_AGENT_RUNTIME_SNAPSHOT_RUNTIME_KEY } from "../agent/runtime/root-agent/persistence/root-agent-runtime-snapshot.repository.js";
@@ -310,7 +311,8 @@ export async function buildServerRuntime(): Promise<ServerRuntime> {
     napcatEventDao,
     napcatQqMessageDao,
   });
-  const eventQueue = new InMemoryAgentEventQueue();
+  const eventQueue = new InMemoryEventQueue<Event>();
+  const storyEventQueue = new InMemoryEventQueue<StoryAgentEvent>();
   const ithomeNewsService = new IthomeNewsService({
     articleDao: newsArticleDao,
     cursorDao: newsFeedCursorDao,
@@ -364,6 +366,11 @@ export async function buildServerRuntime(): Promise<ServerRuntime> {
     }),
     linearMessageLedgerDao,
     runtimeKey: ROOT_AGENT_RUNTIME_SNAPSHOT_RUNTIME_KEY,
+    onLedgerAppended: count => {
+      // Push a ledger_appended event to the story agent so it wakes up
+      // and reconsiders whether its pending batch is ready to flush.
+      storyEventQueue.enqueue({ type: "ledger_appended", count });
+    },
   });
   const rootAgentSession = new RootAgentSession({
     context,
@@ -377,6 +384,7 @@ export async function buildServerRuntime(): Promise<ServerRuntime> {
     new EnterTool(),
     new BackToPortalTool(),
     new WaitTool({
+      eventQueue,
       maxWaitMs: config.server.agent.waitToolMaxWaitMs,
     }),
     new InvokeTool({
@@ -423,6 +431,7 @@ export async function buildServerRuntime(): Promise<ServerRuntime> {
     metricService,
     llmRetryBackoffMs: config.server.agent.llmRetryBackoffMs,
     sourceRuntimeKey: ROOT_AGENT_RUNTIME_SNAPSHOT_RUNTIME_KEY,
+    eventQueue: storyEventQueue,
   });
   const rootAgentRuntime = new RootLoopAgent({
     llmClient,

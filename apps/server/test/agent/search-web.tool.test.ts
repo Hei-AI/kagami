@@ -39,7 +39,6 @@ describe("search_web tool", () => {
       systemPrompt: "runtime-system-prompt",
       contextMessages: [{ role: "user", content: "这份消息应该优先透传" }],
     });
-    expect(result.signal).toBe("continue");
     expect(result.content).toBe("这是给主 Agent 的摘要结果。");
   });
 
@@ -57,7 +56,6 @@ describe("search_web tool", () => {
     );
 
     expect(webSearchAgent.search).not.toHaveBeenCalled();
-    expect(result.signal).toBe("continue");
     expect(JSON.parse(result.content)).toMatchObject({
       ok: false,
       error: "INVALID_ARGUMENTS",
@@ -78,7 +76,6 @@ describe("search_web tool", () => {
     );
 
     expect(webSearchAgent.search).not.toHaveBeenCalled();
-    expect(result.signal).toBe("continue");
     expect(JSON.parse(result.content)).toMatchObject({
       ok: false,
       error: "SESSION_UNAVAILABLE",
@@ -108,7 +105,6 @@ describe("search_web tool", () => {
     );
 
     expect(webSearchAgent.search).not.toHaveBeenCalled();
-    expect(result.signal).toBe("continue");
     expect(JSON.parse(result.content)).toMatchObject({
       ok: false,
       error: "STATE_TRANSITION_NOT_ALLOWED",

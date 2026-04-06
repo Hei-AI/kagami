@@ -30,8 +30,20 @@ export type NewsArticleIngestedEvent = {
   };
 };
 
+/**
+ * Pure wake event. Produced by internal mechanisms (wait tool timers,
+ * stop requests, reset notifications) that need to unblock a consumer
+ * waiting on the event queue but have no business-level content to convey.
+ *
+ * Session routing treats it as a no-op.
+ */
+export type WakeEvent = {
+  type: "wake";
+};
+
 export type Event =
   | NapcatGroupMessageEvent
   | NapcatPrivateMessageEvent
   | NapcatFriendListUpdatedEvent
-  | NewsArticleIngestedEvent;
+  | NewsArticleIngestedEvent
+  | WakeEvent;

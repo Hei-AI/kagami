@@ -53,11 +53,6 @@ describe("DefaultAgentDashboardQueryService", () => {
               description: "未读 3 条消息。",
             },
           ],
-          waiting: {
-            active: true,
-            deadlineAt: new Date("2026-03-30T08:01:00.000Z"),
-            resumeStateId: "qq_group:group-1",
-          },
           availableInvokeTools: [],
         },
         availableInvokeTools: [],
@@ -120,6 +115,7 @@ describe("DefaultAgentDashboardQueryService", () => {
       dequeue: vi.fn(),
       size: vi.fn().mockReturnValue(2),
       clear: vi.fn().mockReturnValue(0),
+      waitForEvent: vi.fn().mockResolvedValue(undefined),
     };
     const service = new DefaultAgentDashboardQueryService({
       rootAgentRuntime: rootAgentRuntime as RootLoopAgent,
@@ -161,11 +157,6 @@ describe("DefaultAgentDashboardQueryService", () => {
             },
           ],
           availableInvokeTools: [],
-          waiting: {
-            active: true,
-            deadlineAt: "2026-03-30T08:01:00.000Z",
-            resumeStateId: "qq_group:group-1",
-          },
         },
         queue: {
           pendingEventCount: 2,

@@ -146,9 +146,6 @@ function RootOverviewTab({ agent }: { agent: RootAgentDashboardSnapshot }) {
             ["当前状态 ID", agent.session.focusedStateId],
             ["当前描述", agent.session.focusedStateDescription || "无"],
             ["状态栈", formatStateStack(agent.session.stateStack)],
-            ["等待状态", agent.session.waiting.active ? "等待中" : "未等待"],
-            ["等待截止", formatDateTime(agent.session.waiting.deadlineAt) ?? "无"],
-            ["等待后恢复", agent.session.waiting.resumeStateId ?? "无"],
             [
               "可用工具",
               agent.session.availableInvokeTools.length > 0
@@ -449,8 +446,6 @@ function formatLoopState(loopState: AgentLoopState): string {
       return "调用 LLM";
     case "executing_tool":
       return "执行工具";
-    case "waiting":
-      return "等待中";
     case "crashed":
       return "已崩溃";
   }
@@ -460,8 +455,6 @@ function getLoopStateClassName(loopState: AgentLoopState): string {
   switch (loopState) {
     case "crashed":
       return "border-destructive/40 bg-destructive/10 text-destructive";
-    case "waiting":
-      return "border-amber-200 bg-amber-50 text-amber-700";
     case "calling_llm":
     case "executing_tool":
     case "consuming_events":
