@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { parseOutgoingMessageSegments } from "../../src/napcat/service/napcat-gateway/shared.js";
+import {
+  parseOutgoingMessageSegments,
+  renderSupportedMessageSegments,
+} from "../../src/napcat/service/napcat-gateway/shared.js";
 
 describe("parseOutgoingMessageSegments", () => {
   it("should keep plain text as a single text segment", () => {
@@ -98,5 +101,64 @@ describe("parseOutgoingMessageSegments", () => {
         },
       },
     ]);
+  });
+});
+
+describe("renderSupportedMessageSegments", () => {
+  it("should render a hydrated reply segment without a leading blank line", () => {
+    expect(
+      renderSupportedMessageSegments([
+        {
+          type: "reply",
+          data: {
+            id: "9988",
+            senderNickname: "小明",
+            senderUserId: "10001",
+            messagePreview: "你好",
+          },
+        },
+      ]),
+    ).toBe("<reference>\n回复 小明 (10001):\n你好\n</reference>\n");
+  });
+
+  it("should render an empty reply reference without a leading blank line", () => {
+    expect(
+      renderSupportedMessageSegments([
+        {
+          type: "reply",
+          data: {
+            id: "9988",
+          },
+        },
+      ]),
+    ).toBe("<reference />\n");
+  });
+
+  it("should keep adjacent text and reply segments without inserting extra blank lines", () => {
+    expect(
+      renderSupportedMessageSegments([
+        {
+          type: "text",
+          data: {
+            text: "前缀",
+          },
+        },
+        {
+          type: "reply",
+          data: {
+            id: "9988",
+            senderNickname: "小明",
+            senderUserId: "10001",
+            messagePreview: "你好",
+          },
+        },
+        {
+          type: "text",
+          data: {
+            text: "后缀",
+          },
+        },
+      ]),
+    ).toBe("前缀<reference>\n回复 小明 (10001):\n你好\n</reference>\n后缀");
   });
 });

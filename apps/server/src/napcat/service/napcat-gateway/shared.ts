@@ -279,10 +279,10 @@ export function formatReplySegment(segment: NapcatReceiveReplySegment): string {
   const preview = toNullableString(segment.data.messagePreview);
 
   if (nickname && userId && preview) {
-    return `\n<reference>\n回复 ${nickname} (${userId}):\n${preview}\n</reference>\n`;
+    return `<reference>\n回复 ${nickname} (${userId}):\n${preview}\n</reference>\n`;
   }
 
-  return "\n<reference />\n";
+  return "<reference />\n";
 }
 
 export function withReplyHydration(
