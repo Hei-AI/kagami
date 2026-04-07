@@ -98,6 +98,7 @@ import { PrismaStoryMemoryDocumentDao } from "../agent/capabilities/story/infra/
 import { PrismaStoryAgentRuntimeSnapshotRepository } from "../agent/capabilities/story/runtime/persistence/prisma-story-agent-runtime-snapshot.repository.js";
 import { StoryMemoryIndexService } from "../agent/capabilities/story/application/story-memory-index.service.js";
 import { StoryRecallService } from "../agent/capabilities/story/application/story-recall.service.js";
+import { StoryRecallExtension } from "../agent/capabilities/story/runtime/story-recall-extension.js";
 import { StoryService } from "../agent/capabilities/story/application/story.service.js";
 import { StoryLoopAgent } from "../agent/capabilities/story/runtime/story-agent.runtime.js";
 import {
@@ -433,6 +434,12 @@ export async function buildServerRuntime(): Promise<ServerRuntime> {
     sourceRuntimeKey: ROOT_AGENT_RUNTIME_SNAPSHOT_RUNTIME_KEY,
     eventQueue: storyEventQueue,
   });
+  const storyRecallExtension = new StoryRecallExtension({
+    storyRecallService,
+    inboundWindowSize: config.server.agent.story.recall.inboundWindowSize,
+    nakedTopK: config.server.agent.story.recall.nakedTopK,
+    nakedScoreThreshold: config.server.agent.story.recall.nakedScoreThreshold,
+  });
   const rootAgentRuntime = new RootLoopAgent({
     llmClient,
     context,
@@ -444,6 +451,7 @@ export async function buildServerRuntime(): Promise<ServerRuntime> {
     contextCompactionTotalTokenThreshold: config.server.agent.contextCompactionTotalTokenThreshold,
     metricService,
     llmRetryBackoffMs: config.server.agent.llmRetryBackoffMs,
+    loopExtensions: [storyRecallExtension],
     summaryTools: [
       ...rootAgentTools.definitions(),
       ...toolCatalog.pick([SUMMARY_TOOL_NAME]).definitions(),

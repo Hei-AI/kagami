@@ -72,6 +72,13 @@ type RootAgentRuntimeDeps = {
   contextCompactionTotalTokenThreshold?: number;
   metricService?: MetricService;
   llmRetryBackoffMs?: number;
+  loopExtensions?: LoopAgentExtension<
+    RootLoopExtensionContext,
+    LlmMessage,
+    "agent",
+    RootAgentCompletion,
+    RootAgentToolExecutionData
+  >[];
   now?: () => Date;
   sleep?: (ms: number) => Promise<void>;
 };
@@ -89,16 +96,20 @@ type PendingToolPersistence = {
   postToolEffects: RootAgentPostToolEffects;
 };
 
-type RootAgentToolExecutionData = {
+export type RootAgentToolExecutionData = {
   postToolEffects: RootAgentPostToolEffects;
 };
 
-type RootAgentCompletion = Awaited<ReturnType<LlmClient["chat"]>>;
+export type RootAgentCompletion = Awaited<ReturnType<LlmClient["chat"]>>;
 
-type RootLoopExtensionContext = {
+export type RootLoopExtensionContext = {
   host: Pick<
     RootAgentHost,
-    "appendWakeReminderIfNeeded" | "compactContextIfNeeded" | "persistSnapshotIfChanged"
+    | "appendWakeReminderIfNeeded"
+    | "compactContextIfNeeded"
+    | "persistSnapshotIfChanged"
+    | "appendMessages"
+    | "getContextSnapshot"
   >;
 };
 
@@ -485,9 +496,9 @@ class RootAgentHost {
     }
   }
 
-  public async compactContextIfNeeded(totalTokens: number | null | undefined): Promise<void> {
+  public async compactContextIfNeeded(totalTokens: number | null | undefined): Promise<boolean> {
     if (!this.contextSummaryOperation) {
-      return;
+      return false;
     }
 
     if (typeof totalTokens !== "number") {
@@ -498,7 +509,7 @@ class RootAgentHost {
       } catch {
         // Ignore logger runtime setup gaps in tests and early boot.
       }
-      return;
+      return false;
     }
 
     while (true) {
@@ -509,7 +520,7 @@ class RootAgentHost {
         totalTokenThreshold: this.contextCompactionTotalTokenThreshold,
       });
       if (!compactionPlan) {
-        return;
+        return false;
       }
 
       let summary;
@@ -544,7 +555,7 @@ class RootAgentHost {
 
       this.clearRecoverableError();
       if (!summary) {
-        return;
+        return false;
       }
 
       await this.context.replaceMessages([
@@ -553,7 +564,7 @@ class RootAgentHost {
       ]);
       this.lastCompactionAt = this.now();
       this.touchActivity();
-      return;
+      return true;
     }
   }
 
@@ -580,6 +591,14 @@ class RootAgentHost {
         throw error;
       }
     }
+  }
+
+  public async appendMessages(messages: LlmMessage[]): Promise<void> {
+    await this.context.appendMessages(messages);
+  }
+
+  public async getContextSnapshot() {
+    return await this.context.getSnapshot();
   }
 
   private async createPersistedSnapshot(): Promise<PersistedRootAgentRuntimeSnapshot> {
@@ -658,21 +677,6 @@ class WakeReminderExtension implements LoopAgentExtension<
 > {
   public async onBeforeRound(context: RootLoopExtensionContext): Promise<void> {
     await context.host.appendWakeReminderIfNeeded();
-  }
-}
-
-class ContextCompactionExtension implements LoopAgentExtension<
-  RootLoopExtensionContext,
-  LlmMessage,
-  "agent",
-  RootAgentCompletion,
-  RootAgentToolExecutionData
-> {
-  public async onAfterCommit(input: {
-    context: RootLoopExtensionContext;
-    result: ReActRoundResult<LlmMessage, RootAgentCompletion, RootAgentToolExecutionData>;
-  }): Promise<void> {
-    await input.context.host.compactContextIfNeeded(input.result.completion.usage?.totalTokens);
   }
 }
 
@@ -849,6 +853,7 @@ export class RootLoopAgent extends BaseLoopAgent<
     llmRetryBackoffMs,
     sleep,
     eventQueue,
+    loopExtensions,
     ...rest
   }: RootAgentRuntimeDeps) {
     const resolvedSleep = sleep ?? createSleep;
@@ -903,7 +908,7 @@ export class RootLoopAgent extends BaseLoopAgent<
       kernel,
       extensions: [
         new WakeReminderExtension(),
-        new ContextCompactionExtension(),
+        ...(loopExtensions ?? []),
         new SnapshotPersistenceExtension(),
       ],
     });
@@ -981,16 +986,31 @@ export class RootLoopAgent extends BaseLoopAgent<
   protected override async runOnce(): Promise<void> {
     await this.awaitPendingReset();
 
-    // Step 1: drain any events in the queue into the context. This is the
-    // moment where wake events get silently consumed (session routes them
-    // to a no-op), napcat messages get routed to their state, etc.
+    // Step 1: drain any events in the queue into the context.
     await this.host.consumePendingEvents();
     await this.awaitPendingReset();
 
-    // Step 2: run one ReAct round. The LLM may call blocking tools like
-    // wait / finish_story_batch; those block inside eventQueue.waitForEvent
-    // until a producer (real event or timer-enqueued wake) resolves them.
-    await this.runReactRound();
+    // Step 2: post-event extension hooks (e.g. story recall).
+    const ctx = this.createLoopExtensionContext();
+    for (const ext of this.extensions) {
+      await ext.onAfterEventsConsumed?.(ctx);
+    }
+
+    // Step 3: run one ReAct round.
+    const result = await this.runReactRound();
+
+    // Step 4: compaction as first-class step + notify extensions.
+    if (result) {
+      const didCompact = await this.host.compactContextIfNeeded(
+        result.completion.usage?.totalTokens,
+      );
+      if (didCompact) {
+        const ctx2 = this.createLoopExtensionContext();
+        for (const ext of this.extensions) {
+          await ext.onContextCompacted?.(ctx2);
+        }
+      }
+    }
   }
 
   protected override async buildRoundInput(): Promise<ReActKernelRunRoundInput<
