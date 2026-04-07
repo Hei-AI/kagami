@@ -101,6 +101,7 @@ import { StoryMemoryIndexService } from "../agent/capabilities/story/application
 import { StoryRecallService } from "../agent/capabilities/story/application/story-recall.service.js";
 import { StoryService } from "../agent/capabilities/story/application/story.service.js";
 import { StoryLoopAgent } from "../agent/capabilities/story/runtime/story-agent.runtime.js";
+import { StoryRecallExtension } from "../agent/capabilities/story/runtime/story-recall.extension.js";
 import {
   SearchMemoryTool,
   SEARCH_MEMORY_TOOL_NAME,
@@ -442,6 +443,12 @@ export async function buildServerRuntime(): Promise<ServerRuntime> {
     sourceRuntimeKey: ROOT_AGENT_RUNTIME_SNAPSHOT_RUNTIME_KEY,
     eventQueue: storyEventQueue,
   });
+  const storyRecallExtension = new StoryRecallExtension({
+    llmClient,
+    storyRecallService,
+    topK: config.server.agent.story.recall.topK,
+    scoreThreshold: config.server.agent.story.recall.scoreThreshold,
+  });
   const rootAgentRuntime = new RootLoopAgent({
     llmClient,
     context,
@@ -453,6 +460,7 @@ export async function buildServerRuntime(): Promise<ServerRuntime> {
     contextCompactionTotalTokenThreshold: config.server.agent.contextCompactionTotalTokenThreshold,
     metricService,
     llmRetryBackoffMs: config.server.agent.llmRetryBackoffMs,
+    loopExtensions: [storyRecallExtension],
     summaryTools: [
       ...rootAgentTools.definitions(),
       ...toolCatalog.pick([SUMMARY_TOOL_NAME]).definitions(),
