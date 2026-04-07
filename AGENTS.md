@@ -15,6 +15,7 @@ workspace 定义位于仓库根目录 `pnpm-workspace.yaml`，当前仅包含 `a
 
 ## 硬约束
 
+- 除非任务明确要求，否则一切交流与汇报统一使用简体中文。
 - 除非任务明确要求，否则默认在仓库根目录执行命令。
 - 数据库相关命令统一读取仓库根目录 `config.yaml` 中的 `server.databaseUrl`。
 - 修改配置 schema 时，必须同步更新：
