@@ -25,6 +25,7 @@ const DEFAULT_OPENAI_CODEX_BASE_URL = "https://chatgpt.com/backend-api/codex/res
 const DEFAULT_CLAUDE_CODE_BASE_URL = "https://api.anthropic.com";
 const DEFAULT_CLAUDE_CODE_MODEL = "claude-sonnet-4-20250514";
 const DEFAULT_CLAUDE_CODE_KEEP_ALIVE_REPLAY_INTERVAL_MINUTES = 30;
+const DEFAULT_AUTH_USAGE_REFRESH_INTERVAL_MS = 10 * 60 * 1000;
 const DEFAULT_CODEX_AUTH_ENABLED = true;
 const DEFAULT_CODEX_AUTH_PUBLIC_BASE_URL = "http://localhost:20004";
 const DEFAULT_CODEX_AUTH_REDIRECT_PATH = "/auth/callback";
@@ -35,8 +36,8 @@ const DEFAULT_CLAUDE_CODE_AUTH_ENABLED = true;
 const DEFAULT_CLAUDE_CODE_AUTH_PUBLIC_BASE_URL = "http://localhost:20004";
 const DEFAULT_CLAUDE_CODE_AUTH_REDIRECT_PATH = "/callback";
 const DEFAULT_CLAUDE_CODE_AUTH_STATE_TTL_MS = 10 * 60 * 1000;
-const DEFAULT_CLAUDE_CODE_REFRESH_LEEWAY_MS = 60_000;
-const DEFAULT_CLAUDE_CODE_REFRESH_CHECK_INTERVAL_MS = 60_000;
+const DEFAULT_CLAUDE_CODE_REFRESH_LEEWAY_MS = 7_200_000;
+const DEFAULT_CLAUDE_CODE_REFRESH_CHECK_INTERVAL_MS = 300_000;
 const DEFAULT_GEMINI_EMBEDDING_BASE_URL = "https://generativelanguage.googleapis.com";
 const DEFAULT_GEMINI_EMBEDDING_MODEL = "gemini-embedding-001";
 const DEFAULT_GEMINI_EMBEDDING_OUTPUT_DIMENSIONALITY = 768;
@@ -250,6 +251,7 @@ const ConfigSchema = z.object({
     napcat: NapcatConfigSchema,
     llm: z.object({
       timeoutMs: PositiveIntSchema.default(DEFAULT_LLM_TIMEOUT_MS),
+      authUsageRefreshIntervalMs: PositiveIntSchema.default(DEFAULT_AUTH_USAGE_REFRESH_INTERVAL_MS),
       codexAuth: z
         .object({
           enabled: z.boolean().default(DEFAULT_CODEX_AUTH_ENABLED),
