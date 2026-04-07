@@ -17,10 +17,6 @@ server:
           outputDimensionality: 768
         retrieval:
           topK: 3
-      recall:
-        inboundWindowSize: 10
-        nakedTopK: 2
-        nakedScoreThreshold: 0.65
   news:
     ithome:
       pollIntervalMs: 300000

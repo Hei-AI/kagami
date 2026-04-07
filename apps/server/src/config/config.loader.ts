@@ -42,9 +42,6 @@ const DEFAULT_GEMINI_EMBEDDING_BASE_URL = "https://generativelanguage.googleapis
 const DEFAULT_GEMINI_EMBEDDING_MODEL = "gemini-embedding-001";
 const DEFAULT_GEMINI_EMBEDDING_OUTPUT_DIMENSIONALITY = 768;
 const DEFAULT_STORY_MEMORY_RETRIEVAL_TOP_K = 3;
-const DEFAULT_STORY_RECALL_INBOUND_WINDOW_SIZE = 10;
-const DEFAULT_STORY_RECALL_NAKED_TOP_K = 2;
-const DEFAULT_STORY_RECALL_NAKED_SCORE_THRESHOLD = 0.65;
 
 const UrlSchema = z.string().url();
 const NonEmptyStringSchema = z.string().trim().min(1);
@@ -219,19 +216,6 @@ const ConfigSchema = z.object({
                 })
                 .default({}),
             }),
-            recall: z
-              .object({
-                inboundWindowSize: PositiveIntSchema.default(
-                  DEFAULT_STORY_RECALL_INBOUND_WINDOW_SIZE,
-                ),
-                nakedTopK: PositiveIntSchema.default(DEFAULT_STORY_RECALL_NAKED_TOP_K),
-                nakedScoreThreshold: z
-                  .number()
-                  .min(0)
-                  .max(1)
-                  .default(DEFAULT_STORY_RECALL_NAKED_SCORE_THRESHOLD),
-              })
-              .default({}),
           }),
           __legacyContextCompactionThreshold__: z.unknown().optional(),
         })

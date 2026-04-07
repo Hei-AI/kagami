@@ -114,11 +114,6 @@ export function createConfigManager(): ConfigManager {
               topK: 3,
             },
           },
-          recall: {
-            inboundWindowSize: 10,
-            nakedTopK: 2,
-            nakedScoreThreshold: 0.65,
-          },
         },
       },
       news: {
@@ -137,7 +132,6 @@ export function createConfigManager(): ConfigManager {
       },
       llm: {
         timeoutMs: 45_000,
-        authUsageRefreshIntervalMs: 600_000,
         codexAuth: {
           enabled: true,
           publicBaseUrl: "http://localhost:20004",
