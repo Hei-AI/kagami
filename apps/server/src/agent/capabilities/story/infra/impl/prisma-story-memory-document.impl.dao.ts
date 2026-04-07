@@ -1,6 +1,9 @@
 import * as Prisma from "../../../../../generated/prisma/internal/prismaNamespace.js";
 import type { Database } from "../../../../../db/client.js";
-import type { StoryMemoryDocumentDao } from "../story-memory-document.dao.js";
+import type {
+  StoryMemoryDocumentDao,
+  StoryMemoryDocumentIndexMetadata,
+} from "../story-memory-document.dao.js";
 import type { StoryMemoryDocumentHit, StoryMemoryDocumentKind } from "../../domain/story.js";
 
 export class PrismaStoryMemoryDocumentDao implements StoryMemoryDocumentDao {
@@ -54,9 +57,40 @@ export class PrismaStoryMemoryDocumentDao implements StoryMemoryDocumentDao {
     });
   }
 
+  public async findIndexMetadataByStoryIds(
+    storyIds: string[],
+  ): Promise<StoryMemoryDocumentIndexMetadata[]> {
+    if (storyIds.length === 0) {
+      return [];
+    }
+
+    const rows = await this.database.storyMemoryDocument.findMany({
+      where: {
+        storyId: {
+          in: storyIds,
+        },
+      },
+      select: {
+        storyId: true,
+        kind: true,
+        embeddingModel: true,
+        embeddingDim: true,
+      },
+    });
+
+    return rows.map(row => ({
+      storyId: row.storyId,
+      kind: row.kind as StoryMemoryDocumentKind,
+      embeddingModel: row.embeddingModel,
+      embeddingDim: row.embeddingDim,
+    }));
+  }
+
   public async searchSimilar(input: {
     queryEmbedding: number[];
     topK: number;
+    embeddingModel: string;
+    embeddingDim: number;
   }): Promise<StoryMemoryDocumentHit[]> {
     const rows = await this.database.$queryRaw<Array<RawStoryMemoryDocumentHit>>(Prisma.sql`
       SELECT
@@ -67,6 +101,8 @@ export class PrismaStoryMemoryDocumentDao implements StoryMemoryDocumentDao {
         1 - ("embedding" <=> ${toVectorLiteral(input.queryEmbedding)}::vector) AS "score"
       FROM "story_memory_document"
       WHERE "embedding" IS NOT NULL
+        AND "embedding_model" = ${input.embeddingModel}
+        AND "embedding_dim" = ${input.embeddingDim}
       ORDER BY "embedding" <=> ${toVectorLiteral(input.queryEmbedding)}::vector ASC
       LIMIT ${Math.max(1, input.topK)}
     `);

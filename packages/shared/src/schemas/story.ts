@@ -38,3 +38,42 @@ export type StoryItem = z.infer<typeof StoryItemSchema>;
 export const StoryListResponseSchema = createPaginatedResponseSchema(StoryItemSchema);
 
 export type StoryListResponse = z.infer<typeof StoryListResponseSchema>;
+
+export const StoryReindexModeSchema = z.enum(["outdated", "all"]);
+
+export type StoryReindexMode = z.infer<typeof StoryReindexModeSchema>;
+
+export const StoryReindexRequestSchema = z.preprocess(
+  value => value ?? {},
+  z
+    .object({
+      mode: StoryReindexModeSchema.default("outdated"),
+      pageSize: z.coerce.number().int().positive().max(100).default(50),
+    })
+    .strict(),
+);
+
+export type StoryReindexRequest = z.infer<typeof StoryReindexRequestSchema>;
+
+export const StoryReindexFailureSchema = z
+  .object({
+    storyId: z.string().min(1),
+    message: z.string().min(1),
+  })
+  .strict();
+
+export type StoryReindexFailure = z.infer<typeof StoryReindexFailureSchema>;
+
+export const StoryReindexResponseSchema = z
+  .object({
+    mode: StoryReindexModeSchema,
+    totalStories: z.number().int().nonnegative(),
+    targetedStories: z.number().int().nonnegative(),
+    reindexedStories: z.number().int().nonnegative(),
+    skippedStories: z.number().int().nonnegative(),
+    failedStories: z.number().int().nonnegative(),
+    failures: z.array(StoryReindexFailureSchema),
+  })
+  .strict();
+
+export type StoryReindexResponse = z.infer<typeof StoryReindexResponseSchema>;

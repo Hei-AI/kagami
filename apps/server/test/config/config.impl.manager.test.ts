@@ -439,7 +439,7 @@ listenGroupIds:
     expect(config.server.llm.providers.claudeCode.keepAliveReplayIntervalMinutes).toBe(45);
   });
 
-  it("should default claude code auth refresh check interval ms to 60000", async () => {
+  it("should default claude code auth refresh check interval ms to 300000", async () => {
     const configPath = await writeConfigFile(
       buildConfigYaml(`
 wsUrl: wss://example.com/napcat
@@ -452,7 +452,7 @@ listenGroupIds:
 
     const config = await loadStaticConfig({ configPath });
 
-    expect(config.server.llm.claudeCodeAuth.refreshCheckIntervalMs).toBe(60_000);
+    expect(config.server.llm.claudeCodeAuth.refreshCheckIntervalMs).toBe(300_000);
   });
 
   it("should parse TEI Embedding Gemma config", async () => {

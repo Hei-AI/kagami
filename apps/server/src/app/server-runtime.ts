@@ -65,6 +65,7 @@ import type { NapcatGatewayService } from "../napcat/service/napcat-gateway.serv
 import { DefaultNapcatEventQueryService } from "../ops/application/napcat-event-query.impl.service.js";
 import { DefaultNapcatQqMessageQueryService } from "../ops/application/napcat-group-message-query.impl.service.js";
 import { DefaultStoryQueryService } from "../ops/application/story-query.impl.service.js";
+import { DefaultStoryReindexService } from "../ops/application/story-reindex.impl.service.js";
 import { TavilyWebSearchService } from "../agent/capabilities/web-search/application/tavily-web-search.service.js";
 import {
   SearchWebRawTool,
@@ -279,11 +280,19 @@ export async function buildServerRuntime(): Promise<ServerRuntime> {
     storyMemoryDocumentDao,
     storyDao,
     embeddingClient,
+    embeddingModel: config.server.agent.story.memory.embedding.model,
     outputDimensionality: config.server.agent.story.memory.embedding.outputDimensionality,
   });
   const storyQueryService = new DefaultStoryQueryService({
     storyDao,
     storyRecallService,
+  });
+  const storyReindexService = new DefaultStoryReindexService({
+    storyDao,
+    storyMemoryDocumentDao,
+    storyMemoryIndexService,
+    embeddingModel: config.server.agent.story.memory.embedding.model,
+    outputDimensionality: config.server.agent.story.memory.embedding.outputDimensionality,
   });
   const visionAgent = new VisionAgent({
     llmClient,
@@ -493,7 +502,7 @@ export async function buildServerRuntime(): Promise<ServerRuntime> {
       new MetricChartHandler({ metricChartService }),
       new NapcatEventHandler({ napcatEventQueryService }),
       new NapcatQqMessageHandler({ napcatQqMessageQueryService }),
-      new StoryHandler({ storyQueryService }),
+      new StoryHandler({ storyQueryService, storyReindexService }),
       new NapcatHandler({ napcatGatewayService }),
     ],
   });

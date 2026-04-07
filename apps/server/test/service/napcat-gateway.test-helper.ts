@@ -132,6 +132,7 @@ export function createConfigManager(): ConfigManager {
       },
       llm: {
         timeoutMs: 45_000,
+        authUsageRefreshIntervalMs: 600_000,
         codexAuth: {
           enabled: true,
           publicBaseUrl: "http://localhost:20004",

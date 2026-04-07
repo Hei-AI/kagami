@@ -14,22 +14,26 @@ export class StoryRecallService {
   private readonly storyMemoryDocumentDao: StoryMemoryDocumentDao;
   private readonly storyDao: StoryDao;
   private readonly embeddingClient: EmbeddingClient;
+  private readonly embeddingModel: string;
   private readonly outputDimensionality: number;
 
   public constructor({
     storyMemoryDocumentDao,
     storyDao,
     embeddingClient,
+    embeddingModel,
     outputDimensionality,
   }: {
     storyMemoryDocumentDao: StoryMemoryDocumentDao;
     storyDao: StoryDao;
     embeddingClient: EmbeddingClient;
+    embeddingModel: string;
     outputDimensionality: number;
   }) {
     this.storyMemoryDocumentDao = storyMemoryDocumentDao;
     this.storyDao = storyDao;
     this.embeddingClient = embeddingClient;
+    this.embeddingModel = embeddingModel;
     this.outputDimensionality = outputDimensionality;
   }
 
@@ -42,6 +46,8 @@ export class StoryRecallService {
     const hits = await this.storyMemoryDocumentDao.searchSimilar({
       queryEmbedding: normalizeEmbedding(response.embedding),
       topK: Math.max(input.topK, 1) * 3,
+      embeddingModel: this.embeddingModel,
+      embeddingDim: this.outputDimensionality,
     });
     const grouped = new Map<
       string,
