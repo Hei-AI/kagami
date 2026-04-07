@@ -79,6 +79,25 @@ ${indent(napcatBlock, 4)}
 `;
 }
 
+function useTeiEmbeddingConfig(content: string, extraLines = ""): string {
+  const teiBlock = [
+    "        embedding:",
+    "          provider: tei-embedding-gemma",
+    "          baseUrl: http://127.0.0.1:20008",
+    "          model: google/embeddinggemma-300m",
+    "          outputDimensionality: 768",
+    extraLines,
+  ]
+    .filter(Boolean)
+    .join("\n");
+
+  return content.replace(
+    `        embedding:
+          apiKey: gemini-key`,
+    teiBlock,
+  );
+}
+
 function indent(content: string, spaces: number): string {
   const prefix = " ".repeat(spaces);
   return content
@@ -434,6 +453,98 @@ listenGroupIds:
     const config = await loadStaticConfig({ configPath });
 
     expect(config.server.llm.claudeCodeAuth.refreshCheckIntervalMs).toBe(60_000);
+  });
+
+  it("should parse TEI Embedding Gemma config", async () => {
+    const configPath = await writeConfigFile(
+      useTeiEmbeddingConfig(
+        buildConfigYaml(`
+wsUrl: wss://example.com/napcat
+reconnectMs: 3000
+requestTimeoutMs: 10000
+listenGroupIds:
+  - "123456"
+`),
+      ),
+    );
+
+    const config = await loadStaticConfig({ configPath });
+
+    expect(config.server.agent.story.memory.embedding).toEqual({
+      provider: "tei-embedding-gemma",
+      baseUrl: "http://127.0.0.1:20008",
+      model: "google/embeddinggemma-300m",
+      outputDimensionality: 768,
+    });
+  });
+
+  it("should reject TEI Embedding Gemma config without baseUrl", async () => {
+    const configPath = await writeConfigFile(
+      useTeiEmbeddingConfig(
+        buildConfigYaml(`
+wsUrl: wss://example.com/napcat
+reconnectMs: 3000
+requestTimeoutMs: 10000
+listenGroupIds:
+  - "123456"
+`),
+      ).replace("          baseUrl: http://127.0.0.1:20008\n", ""),
+    );
+
+    await expect(loadStaticConfig({ configPath })).rejects.toMatchObject({
+      name: "BizError",
+      message: "配置值不合法",
+      meta: {
+        key: "server.agent.story.memory.embedding.baseUrl",
+        reason: "CONFIG_INVALID",
+      },
+    } satisfies Partial<BizError>);
+  });
+
+  it("should reject TEI Embedding Gemma config without model", async () => {
+    const configPath = await writeConfigFile(
+      useTeiEmbeddingConfig(
+        buildConfigYaml(`
+wsUrl: wss://example.com/napcat
+reconnectMs: 3000
+requestTimeoutMs: 10000
+listenGroupIds:
+  - "123456"
+`),
+      ).replace("          model: google/embeddinggemma-300m\n", ""),
+    );
+
+    await expect(loadStaticConfig({ configPath })).rejects.toMatchObject({
+      name: "BizError",
+      message: "配置值不合法",
+      meta: {
+        key: "server.agent.story.memory.embedding.model",
+        reason: "CONFIG_INVALID",
+      },
+    } satisfies Partial<BizError>);
+  });
+
+  it("should reject TEI Embedding Gemma config without output dimensionality", async () => {
+    const configPath = await writeConfigFile(
+      useTeiEmbeddingConfig(
+        buildConfigYaml(`
+wsUrl: wss://example.com/napcat
+reconnectMs: 3000
+requestTimeoutMs: 10000
+listenGroupIds:
+  - "123456"
+`),
+      ).replace("          outputDimensionality: 768\n", ""),
+    );
+
+    await expect(loadStaticConfig({ configPath })).rejects.toMatchObject({
+      name: "BizError",
+      message: "配置值不合法",
+      meta: {
+        key: "server.agent.story.memory.embedding.outputDimensionality",
+        reason: "CONFIG_INVALID",
+      },
+    } satisfies Partial<BizError>);
   });
 
   it("should allow overriding claude code auth refresh check interval ms", async () => {

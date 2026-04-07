@@ -1,8 +1,10 @@
 import { createHash } from "node:crypto";
 import type { Config } from "../../config/config.loader.js";
+import { BizError } from "../../common/errors/biz-error.js";
 import { AppLogger } from "../../logger/logger.js";
 import type { EmbeddingCacheDao } from "./cache.dao.js";
 import { createGeminiEmbeddingProvider } from "./providers/gemini-provider.js";
+import { createTeiEmbeddingGemmaProvider } from "./providers/tei-embedding-gemma-provider.js";
 import type { EmbeddingProvider } from "./provider.js";
 import type { EmbeddingRequest, EmbeddingResponse } from "./types.js";
 
@@ -20,13 +22,7 @@ type CreateEmbeddingClientOptions = {
 };
 
 export function createEmbeddingClient(options: CreateEmbeddingClientOptions): EmbeddingClient {
-  const provider =
-    options.provider ??
-    createGeminiEmbeddingProvider({
-      apiKey: options.config.apiKey,
-      baseUrl: options.config.baseUrl,
-      model: options.config.model,
-    });
+  const provider = options.provider ?? createEmbeddingProvider(options.config);
 
   return {
     async embed(request: EmbeddingRequest): Promise<EmbeddingResponse> {
@@ -99,10 +95,46 @@ function resolveEmbeddingRequest(input: {
   model: string;
   outputDimensionality: number;
 } {
+  if (input.config.provider === "tei-embedding-gemma") {
+    if (input.request.model && input.request.model !== input.config.model) {
+      throw new BizError({
+        message: "TEI Embedding Gemma 不支持覆盖模型",
+        statusCode: 400,
+      });
+    }
+
+    if (input.request.outputDimensionality !== input.config.outputDimensionality) {
+      throw new BizError({
+        message: "TEI Embedding Gemma 的输出维度必须与配置一致",
+        statusCode: 400,
+      });
+    }
+
+    return {
+      model: input.config.model,
+      outputDimensionality: input.config.outputDimensionality,
+    };
+  }
+
   return {
     model: input.request.model ?? input.config.model,
     outputDimensionality: input.request.outputDimensionality ?? input.config.outputDimensionality,
   };
+}
+
+function createEmbeddingProvider(config: StoryMemoryEmbeddingConfig): EmbeddingProvider {
+  if (config.provider === "tei-embedding-gemma") {
+    return createTeiEmbeddingGemmaProvider({
+      baseUrl: config.baseUrl,
+      model: config.model,
+    });
+  }
+
+  return createGeminiEmbeddingProvider({
+    apiKey: config.apiKey,
+    baseUrl: config.baseUrl,
+    model: config.model,
+  });
 }
 
 function hashEmbeddingContent(content: string): string {

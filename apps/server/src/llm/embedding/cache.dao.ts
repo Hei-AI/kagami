@@ -1,7 +1,7 @@
-import type { EmbeddingTaskType } from "./types.js";
+import type { EmbeddingProviderId, EmbeddingTaskType } from "./types.js";
 
 export type EmbeddingCacheKey = {
-  provider: "google";
+  provider: EmbeddingProviderId;
   model: string;
   taskType: EmbeddingTaskType;
   outputDimensionality: number;

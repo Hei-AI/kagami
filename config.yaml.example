@@ -11,10 +11,9 @@ server:
       idleFlushMs: 120000
       memory:
         embedding:
-          provider: google
-          apiKey: your-gemini-api-key
-          baseUrl: https://generativelanguage.googleapis.com
-          model: gemini-embedding-001
+          provider: tei-embedding-gemma
+          baseUrl: http://127.0.0.1:20008
+          model: google/embeddinggemma-300m
           outputDimensionality: 768
         retrieval:
           topK: 3

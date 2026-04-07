@@ -1,3 +1,5 @@
+export type EmbeddingProviderId = "google" | "tei-embedding-gemma";
+
 export type EmbeddingTaskType = "RETRIEVAL_DOCUMENT" | "RETRIEVAL_QUERY";
 
 export type EmbeddingRequest = {
@@ -8,7 +10,7 @@ export type EmbeddingRequest = {
 };
 
 export type EmbeddingResponse = {
-  provider: "google";
+  provider: EmbeddingProviderId;
   model: string;
   embedding: number[];
 };

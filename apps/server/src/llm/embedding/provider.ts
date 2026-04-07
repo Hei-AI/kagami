@@ -1,6 +1,6 @@
-import type { EmbeddingRequest, EmbeddingResponse } from "./types.js";
+import type { EmbeddingProviderId, EmbeddingRequest, EmbeddingResponse } from "./types.js";
 
 export interface EmbeddingProvider {
-  id: "google";
+  id: EmbeddingProviderId;
   embed(request: EmbeddingRequest): Promise<EmbeddingResponse>;
 }

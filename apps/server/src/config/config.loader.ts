@@ -85,7 +85,40 @@ const LlmProviderSchema = z.enum(["deepseek", "openai", "openai-codex", "claude-
   LlmProviderId,
   ...LlmProviderId[],
 ]);
-const StoryMemoryEmbeddingProviderSchema = z.literal("google");
+const GoogleStoryMemoryEmbeddingConfigSchema = z.object({
+  provider: z.literal("google"),
+  apiKey: NonEmptyStringSchema,
+  baseUrl: UrlSchema.default(DEFAULT_GEMINI_EMBEDDING_BASE_URL),
+  model: NonEmptyStringSchema.default(DEFAULT_GEMINI_EMBEDDING_MODEL),
+  outputDimensionality: PositiveIntSchema.default(DEFAULT_GEMINI_EMBEDDING_OUTPUT_DIMENSIONALITY),
+});
+const TeiEmbeddingGemmaConfigSchema = z.object({
+  provider: z.literal("tei-embedding-gemma"),
+  baseUrl: UrlSchema,
+  model: NonEmptyStringSchema,
+  outputDimensionality: PositiveIntSchema,
+});
+const StoryMemoryEmbeddingConfigSchema = z.preprocess(
+  value => {
+    if (!value || typeof value !== "object" || Array.isArray(value)) {
+      return value;
+    }
+
+    const record = value as Record<string, unknown>;
+    if ("provider" in record) {
+      return value;
+    }
+
+    return {
+      ...record,
+      provider: "google",
+    };
+  },
+  z.discriminatedUnion("provider", [
+    GoogleStoryMemoryEmbeddingConfigSchema,
+    TeiEmbeddingGemmaConfigSchema,
+  ]),
+);
 const LlmUsageAttemptConfigSchema = z.object({
   provider: LlmProviderSchema,
   model: NonEmptyStringSchema,
@@ -175,15 +208,7 @@ const ConfigSchema = z.object({
             batchSize: PositiveIntSchema.default(DEFAULT_AGENT_STORY_BATCH_SIZE),
             idleFlushMs: PositiveIntSchema.default(DEFAULT_AGENT_STORY_IDLE_FLUSH_MS),
             memory: z.object({
-              embedding: z.object({
-                provider: StoryMemoryEmbeddingProviderSchema.default("google"),
-                apiKey: NonEmptyStringSchema,
-                baseUrl: UrlSchema.default(DEFAULT_GEMINI_EMBEDDING_BASE_URL),
-                model: NonEmptyStringSchema.default(DEFAULT_GEMINI_EMBEDDING_MODEL),
-                outputDimensionality: PositiveIntSchema.default(
-                  DEFAULT_GEMINI_EMBEDDING_OUTPUT_DIMENSIONALITY,
-                ),
-              }),
+              embedding: StoryMemoryEmbeddingConfigSchema,
               retrieval: z
                 .object({
                   topK: PositiveIntSchema.default(DEFAULT_STORY_MEMORY_RETRIEVAL_TOP_K),
