@@ -114,10 +114,6 @@ export function createConfigManager(): ConfigManager {
               topK: 3,
             },
           },
-          recall: {
-            topK: 2,
-            scoreThreshold: 0.65,
-          },
         },
       },
       news: {

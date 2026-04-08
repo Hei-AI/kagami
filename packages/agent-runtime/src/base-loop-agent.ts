@@ -203,13 +203,6 @@ export abstract class BaseLoopAgent<
     }
   }
 
-  protected async notifyContextCompacted(): Promise<void> {
-    const context = this.createLoopExtensionContext();
-    for (const extension of this.extensions) {
-      await extension.onContextCompacted?.(context);
-    }
-  }
-
   private async runLoop(): Promise<void> {
     try {
       await this.ensureInitialized();

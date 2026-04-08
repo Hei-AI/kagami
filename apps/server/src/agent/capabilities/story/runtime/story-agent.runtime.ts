@@ -350,7 +350,7 @@ class StoryAgentHost {
     this.transitionTo("idle");
   }
 
-  public async compactContextIfNeeded(totalTokens: number | null | undefined): Promise<boolean> {
+  public async compactContextIfNeeded(totalTokens: number | null | undefined): Promise<void> {
     if (typeof totalTokens !== "number") {
       try {
         logger.warn("Skipping story context summary because totalTokens is missing", {
@@ -359,7 +359,7 @@ class StoryAgentHost {
       } catch {
         // Ignore logger runtime setup gaps in tests and early boot.
       }
-      return false;
+      return;
     }
 
     while (true) {
@@ -370,7 +370,7 @@ class StoryAgentHost {
         totalTokenThreshold: this.contextCompactionTotalTokenThreshold,
       });
       if (!compactionPlan) {
-        return false;
+        return;
       }
 
       let summary: string | null;
@@ -398,7 +398,7 @@ class StoryAgentHost {
 
       this.clearRecoverableError();
       if (!summary) {
-        return false;
+        return;
       }
 
       await this.context.replaceMessages([
@@ -407,7 +407,7 @@ class StoryAgentHost {
       ]);
       this.lastCompactionAt = this.now();
       this.touchActivity();
-      return true;
+      return;
     }
   }
 
