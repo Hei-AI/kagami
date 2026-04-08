@@ -29,5 +29,6 @@ export interface LoopAgentExtension<
     result: ReActRoundResult<TMessage, TCompletion, TExtensionData>;
   }): Promise<void> | void;
   onAfterReset?(context: TContext): Promise<void> | void;
+  onContextCompacted?(context: TContext): Promise<void> | void;
   onUnhandledError?(input: { context: TContext; error: unknown }): Promise<void> | void;
 }

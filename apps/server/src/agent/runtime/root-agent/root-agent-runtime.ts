@@ -11,6 +11,7 @@ import {
 import type {
   AgentContext,
   AgentContextDashboardSummary,
+  AgentContextSnapshot,
   AssistantMessage,
 } from "../context/agent-context.js";
 import {
@@ -57,6 +58,14 @@ type ContextSummaryLike =
       }): Promise<string | null>;
     };
 
+type RootLoopExtension = LoopAgentExtension<
+  RootLoopExtensionContext,
+  LlmMessage,
+  "agent",
+  RootAgentCompletion,
+  RootAgentToolExecutionData
+>;
+
 type RootAgentRuntimeDeps = {
   llmClient: LlmClient;
   context: AgentContext;
@@ -72,6 +81,7 @@ type RootAgentRuntimeDeps = {
   contextCompactionTotalTokenThreshold?: number;
   metricService?: MetricService;
   llmRetryBackoffMs?: number;
+  loopExtensions?: RootLoopExtension[];
   now?: () => Date;
   sleep?: (ms: number) => Promise<void>;
 };
@@ -89,17 +99,22 @@ type PendingToolPersistence = {
   postToolEffects: RootAgentPostToolEffects;
 };
 
-type RootAgentToolExecutionData = {
+export type RootAgentToolExecutionData = {
   postToolEffects: RootAgentPostToolEffects;
 };
 
-type RootAgentCompletion = Awaited<ReturnType<LlmClient["chat"]>>;
+export type RootAgentCompletion = Awaited<ReturnType<LlmClient["chat"]>>;
 
-type RootLoopExtensionContext = {
+export type RootLoopExtensionContext = {
   host: Pick<
     RootAgentHost,
-    "appendWakeReminderIfNeeded" | "compactContextIfNeeded" | "persistSnapshotIfChanged"
+    | "appendWakeReminderIfNeeded"
+    | "compactContextIfNeeded"
+    | "persistSnapshotIfChanged"
+    | "getContextSnapshot"
+    | "appendMessages"
   >;
+  notifyContextCompacted: () => Promise<void>;
 };
 
 export type RootAgentLoopState =
@@ -408,6 +423,17 @@ class RootAgentHost {
     });
   }
 
+  public async getContextSnapshot(): Promise<AgentContextSnapshot> {
+    return await this.context.getSnapshot();
+  }
+
+  public async appendMessages(messages: LlmMessage[]): Promise<void> {
+    await this.runSerializedMutation(async () => {
+      await this.context.appendMessages(messages);
+      this.touchActivity();
+    });
+  }
+
   public recordCrash(error: unknown): void {
     this.loopState = "crashed";
     this.lastError = {
@@ -485,9 +511,9 @@ class RootAgentHost {
     }
   }
 
-  public async compactContextIfNeeded(totalTokens: number | null | undefined): Promise<void> {
+  public async compactContextIfNeeded(totalTokens: number | null | undefined): Promise<boolean> {
     if (!this.contextSummaryOperation) {
-      return;
+      return false;
     }
 
     if (typeof totalTokens !== "number") {
@@ -498,7 +524,7 @@ class RootAgentHost {
       } catch {
         // Ignore logger runtime setup gaps in tests and early boot.
       }
-      return;
+      return false;
     }
 
     while (true) {
@@ -509,7 +535,7 @@ class RootAgentHost {
         totalTokenThreshold: this.contextCompactionTotalTokenThreshold,
       });
       if (!compactionPlan) {
-        return;
+        return false;
       }
 
       let summary;
@@ -544,7 +570,7 @@ class RootAgentHost {
 
       this.clearRecoverableError();
       if (!summary) {
-        return;
+        return false;
       }
 
       await this.context.replaceMessages([
@@ -553,7 +579,7 @@ class RootAgentHost {
       ]);
       this.lastCompactionAt = this.now();
       this.touchActivity();
-      return;
+      return true;
     }
   }
 
@@ -672,7 +698,12 @@ class ContextCompactionExtension implements LoopAgentExtension<
     context: RootLoopExtensionContext;
     result: ReActRoundResult<LlmMessage, RootAgentCompletion, RootAgentToolExecutionData>;
   }): Promise<void> {
-    await input.context.host.compactContextIfNeeded(input.result.completion.usage?.totalTokens);
+    const compacted = await input.context.host.compactContextIfNeeded(
+      input.result.completion.usage?.totalTokens,
+    );
+    if (compacted) {
+      await input.context.notifyContextCompacted();
+    }
   }
 }
 
@@ -849,6 +880,7 @@ export class RootLoopAgent extends BaseLoopAgent<
     llmRetryBackoffMs,
     sleep,
     eventQueue,
+    loopExtensions,
     ...rest
   }: RootAgentRuntimeDeps) {
     const resolvedSleep = sleep ?? createSleep;
@@ -904,6 +936,7 @@ export class RootLoopAgent extends BaseLoopAgent<
       extensions: [
         new WakeReminderExtension(),
         new ContextCompactionExtension(),
+        ...(loopExtensions ?? []),
         new SnapshotPersistenceExtension(),
       ],
     });
@@ -969,6 +1002,7 @@ export class RootLoopAgent extends BaseLoopAgent<
   protected override createLoopExtensionContext(): RootLoopExtensionContext {
     return {
       host: this.host,
+      notifyContextCompacted: () => this.notifyContextCompacted(),
     };
   }
 
