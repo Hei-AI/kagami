@@ -15,6 +15,52 @@ Kagami **不是一个 QQ 群聊机器人**，而是一个**拥有自己生活的
 
 任何架构决策、模块划分、命名，如果与这个定位冲突，定位优先。
 
+## 开发原则：KV 缓存命中率优先
+
+开发 Agent 的新功能时，**必须非常非常重视 KV 缓存能否命中**。provider 侧 KV cache 的命中与否直接决定每轮推理的延迟和成本，一次前缀漂移会让整段历史从零换入。这条原则的优先级等同于项目理念，任何新 capability / operation / tool 在设计阶段就要想清楚"它会不会让已有会话的前缀失效"。
+
+### 核心模型：稳定前缀 + 易变尾部 + 计划性重建
+
+把 Agent 的 message 列表想象成三段：
+
+1. **稳定前缀**：system prompt、工具定义、历史对话。只追加、不修改。
+2. **易变尾部**：当轮新事件、召回注入、工具调用结果。可以变，但只影响最后一段。
+3. **计划性重建**：只有上下文压缩这类明确的、罕见的动作才允许整体 `replaceMessages`，一次性把旧前缀换成更短的新前缀，从此作为新的稳定前缀继续生长。
+
+对应到运行时，`AgentContext` 只暴露两个会改动 message 列表的操作：`appendMessages`（保留前缀）与 `replaceMessages`（明确破坏并重建前缀）。新功能如果既不是追加也不是压缩，就要警惕。
+
+### 现有实现里的三个范例
+
+写新 capability 前，先读这三处代码，它们是 KV 缓存友好的参考实现：
+
+**1. Web Search —— 子 Agent 隔离，避免污染主上下文**
+
+`capabilities/web-search/` 的做法是开一个独立的 `WebSearchTaskAgent`，通过 `structuredClone` 复制主 Agent 的 snapshot，在隔离上下文里跑多轮搜索、读网页、整理，然后只把**最终摘要字符串**作为 tool result 返回给主 Agent。原始搜索结果、网页正文、中间推理全都留在子 Agent 的上下文里用完即弃，主 Agent 的前缀完全不受影响。
+
+**教训**：任何会产生大量中间 token 的能力（搜索、抓网页、读长文件、跑代码），都应该封装成 TaskAgent 或 Operation，只向主 Agent 回传摘要。不要让原始素材进主 Agent 的消息列表。
+
+**2. Story Recall —— 追加到尾部，而非插入前缀**
+
+`capabilities/story/runtime/story-recall.extension.ts` 在 `onBeforeRound` 阶段通过 `context.host.appendMessages([recallMessage])` 把召回结果**追加到消息尾部**，包在 `<story_recall>` 标签里。它绝不把召回内容塞到 system prompt 或历史中段。配合 `lastRecallMessageCount` 去重，只在真的有新消息时才产出新召回，避免空转写入。压缩发生时，扩展通过 `onContextCompacted()` 清空自身的注入集合，跟着新前缀重新开始。
+
+**教训**：想给 Agent "喂"外部信息（召回、新闻、提醒、周期状态），一律**往尾部 append**。永远不要为了"让它更显眼"而把动态内容插到 system prompt 或前缀里——那会让整个会话每轮都从零换入。
+
+**3. Context Summarizer —— 唯一允许破坏前缀的地方**
+
+`RootAgentRuntime.compactContextIfNeeded` 在 token 超阈值时触发压缩：计算保留边界（最近 10% 消息，扩展到 tool-call 边界），对前半部分生成摘要，然后用 `replaceMessages([summaryMessage, ...messagesToKeep])` **一次性**重建整条消息列表。这一次重建会彻底失效旧的 KV cache，但换来的是一个更短、更稳定的新前缀，后续多轮共享。压缩后通过 `notifyContextCompacted()` 通知所有扩展重置自身临时状态，让它们配合新前缀继续工作。
+
+**教训**：`replaceMessages` 是一次"受控的昂贵操作"。除了上下文压缩这种明确场景，不要再引入第二种会调用它的路径。任何新功能想"改写一下历史"，都应该先问：能不能改成 append？
+
+### 具体红线
+
+- **不要**在 system prompt 或稳定前缀里写入时间戳、随机 ID、轮次计数、当前时间、会变的运行时状态。这些属于尾部或工具结果。
+- **不要**在一轮内反复改写 system prompt 或工具描述来"传递状态"。状态走消息尾部或工具参数。
+- **不要**为了排版/美观调整历史消息的序列化格式、字段顺序、JSON 键顺序——同一会话内这类改动会让已命中的前缀全部报废。
+- **不要**给主 Agent 添加会返回大块原始数据的工具。大数据先进子 Agent / Operation，再以摘要回传。
+- **不要**在压缩之外的地方调用 `replaceMessages`。
+- **system prompt 和工具集的改动要集中提交**：每次改动都会让所有在飞会话的前缀失效一次，小步高频修改是最糟糕的模式。
+- Review 新 capability / operation / tool 时，把"会不会破坏 KV 缓存命中"作为显式检查项写进自检清单。
+
 ## 项目定位
 
 Kagami 是一个基于 pnpm workspace 的全栈 TypeScript Monorepo，当前包含四个工作空间包：
