@@ -155,6 +155,7 @@ export async function createAuthModule({
     codexAuthService,
     codexBinaryPath: codexConfig.binaryPath,
     authUsageSnapshotDao,
+    refreshIntervalMs: llmConfig.authUsageRefreshIntervalMs,
   });
   codexAuthService.setUsageLimitsProvider(async () => {
     return {
