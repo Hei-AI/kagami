@@ -2,6 +2,19 @@
 
 你的一切交流和汇报，使用简体中文。
 
+## 项目理念（必读）
+
+Kagami **不是一个 QQ 群聊机器人**，而是一个**拥有自己生活的 Agent**。
+
+群聊只是他生活的一部分，就像一个人不会把自己定义为"聊天的人"。只要给他足够多的能力（capability），他就可以像一个真正的人那样，去读新闻、去记住发生过的事、去主动做自己感兴趣的事。项目的核心概念是 **Agent as a life**：
+
+- QQ 群消息只是他接收到的一种事件，与 RSS 轮询、定时任务、系统通知在架构上是平级的"生活输入"。
+- 他有自己的记忆（Story / RAG）、自己的兴趣（News 轮询、主动发言）、自己的节奏（事件队列、空闲时刻的后台动作）。
+- 新增 capability 时，应该问自己："这是在给 Agent 的生活加一种新的存在方式吗？"，而不是"这是在给聊天机器人加一个功能吗？"。
+- 不要把 NapCat、群聊相关的概念泄漏到 `agent/runtime` 的核心抽象里。它只是众多外部事件源之一。
+
+任何架构决策、模块划分、命名，如果与这个定位冲突，定位优先。
+
 ## 项目定位
 
 Kagami 是一个基于 pnpm workspace 的全栈 TypeScript Monorepo，当前包含四个工作空间包：
@@ -110,16 +123,19 @@ pnpm db:migrate:resolve -- --applied <migration_id> # 标记迁移已应用
 - `config.yaml.example` 是示例配置；调整配置结构时要同步维护它。
 - 关键配置分区包括：
   - `server.databaseUrl`、`server.port`
-  - `server.agent.portalSleepMs`、`server.agent.contextCompactionThreshold`
+  - `server.agent.contextCompactionTotalTokenThreshold`、`llmRetryBackoffMs`、`waitToolMaxWaitMs`、`notificationBatchWindowMs`
+  - `server.agent.story.batchSize`、`idleFlushMs`、`memory.embedding`、`memory.retrieval`、`recall.topK`、`recall.scoreThreshold`
+  - `server.news.ithome.pollIntervalMs`、`recentArticleLimit`、`articleMaxChars`
   - `server.napcat.wsUrl`、`server.napcat.reconnectMs`、`server.napcat.requestTimeoutMs`
   - `server.napcat.listenGroupIds`、`server.napcat.startupContextRecentMessageCount`
-  - `server.llm.timeoutMs`
+  - `server.llm.timeoutMs`、`authUsageRefreshIntervalMs`
   - `server.llm.codexAuth`、`server.llm.claudeCodeAuth`
   - `server.llm.providers.deepseek`、`server.llm.providers.openai`、`server.llm.providers.openaiCodex`、`server.llm.providers.claudeCode`
-  - `server.llm.usages.agent`、`contextSummarizer`、`vision`、`webSearchAgent`
-  - `server.rag.embedding`、`server.rag.retrieval`
+  - `server.llm.usages.agent`、`storyAgent`、`contextSummarizer`、`vision`、`webSearchAgent`
   - `server.tavily.apiKey`
   - `server.bot.qq`、`server.bot.creator`
+
+> 历史遗留说明：早期配置中的 `server.rag.*` 已经迁移到 `server.agent.story.memory.*`，`config.yaml` 中不应再存在独立的 `server.rag` 分区。
 
 ## 代码规范
 
@@ -178,9 +194,11 @@ pnpm db:migrate:resolve -- --applied <migration_id> # 标记迁移已应用
 - `logger/`：日志 runtime、serializer、sink、日志 DAO
 - `auth/`：OAuth、回调服务、secret store、usage cache、usage trend 与统一认证 HTTP 接口
 - `llm/`：LLM provider、chat client、embedding、playground、相关 DAO
-- `napcat/`：NapCat gateway、入站事件归一化、消息发送、NapCat 相关持久化与 HTTP 接口
-- `agent/`：Kagami 的 Agent 业务层，负责 RootAgent、capabilities、NapCat 事件适配、上下文压缩、RAG 等
-- `ops/`：后台查询与观测接口，例如 app log、LLM history、embedding cache、NapCat history
+- `napcat/`：NapCat gateway、入站事件归一化、消息发送、NapCat 相关持久化与 HTTP 接口（只是 Agent 的一种事件源，不是主干）
+- `news/`：IThome 等资讯源的轮询与持久化，给 Agent 提供"读新闻"这类生活输入
+- `metric/`：运行时指标与可视化数据接口
+- `agent/`：Kagami 的 Agent 业务层，负责 RootAgent、capabilities、事件适配、上下文压缩、故事记忆、RAG 等
+- `ops/`：后台查询与观测接口，例如 app log、LLM history、embedding cache、Story、Agent Dashboard、NapCat history
 - `app/`：最高层运行时装配，负责模块 wiring、Fastify 路由注册、健康检查与启动上下文补水
 
 模块内优先按垂直分层组织，常见层次包括：
@@ -205,7 +223,8 @@ Agent 相关补充约定：
 - 通用 Agent Runtime 内核放在 `packages/agent-runtime`，Kagami 项目语义放在 `apps/server/src/agent`。
 - `apps/server/src/agent` 当前按 `runtime / capabilities` 分层组织：
   - `runtime/`：仍留在 server 的 Kagami 定制运行时，如 `RootAgentRuntime`、session、事件队列、上下文渲染
-  - `capabilities/`：按能力聚合的实现，如 `web-search`、`messaging`、`context-summary`、`rag`、`vision`
+  - `capabilities/`：按能力聚合的实现，当前包括 `messaging`、`context-summary`、`story`、`rag`、`news`、`vision`、`web-search`
+- 新增 capability 应当符合"给 Agent 的生活添一种新的存在方式"的视角；群聊相关逻辑只属于 `messaging`，不要让它的概念扩散到 runtime 或其他 capability。
 - `context-summary` 归类为 `Operation`，不是 `TaskAgent`。
 - `web-search` 是标准 `TaskAgent` 能力；其对主 Agent 暴露的是 tool，私有工具跟随 task-agent 放在能力目录内。
 - `Tool` 的职责是上层调用入口，不承载能力本体；业务语义应放在 capability service、task-agent 或 operation 中。
@@ -217,19 +236,22 @@ Agent 相关补充约定：
 - OAuth 与配额管理：`/auth/:provider/status`、`/auth/:provider/login-url`、`/auth/:provider/logout`、`/auth/:provider/refresh`、`/auth/:provider/usage-limits`、`/auth/:provider/usage-trend`
 - LLM Playground：`/llm/providers`、`/llm/playground-tools`、`/llm/chat`
 - Napcat 主动发送：`/napcat/group/send`
-- 观测与历史查询：`/app-log/query`、`/llm-chat-call/query`、`/embedding-cache/query`、`/napcat-event/query`、`/napcat-group-message/query`
+- 观测与历史查询：`/app-log/query`、`/llm-chat-call/query`、`/napcat-event/query`、`/napcat-group-message/query`、`/story/query`
+- Agent 状态与指标：`/agent-dashboard/*`、`/metric-chart/*`
 
 ### 前端（`@kagami/web`）
 
-前端是一个 React 管理台，使用 `react-router-dom`，当前主要页面包括：
+前端是一个 React 管理台，用于观测 Agent 的"生活状态"。使用 `react-router-dom`，当前主要页面包括：
 
+- `/agent-dashboard`：Agent 总览首页（默认入口）
 - `/auth/:provider`：认证管理页
 - `/llm-playground`：LLM Playground
 - `/llm-history`：LLM 调用历史
-- `/embedding-cache-history`：Embedding 缓存历史
 - `/app-log-history`：应用日志历史
 - `/napcat-event-history`：Napcat 事件历史
 - `/napcat-group-message-history`：群消息历史
+- `/story-history`：Story 记忆历史
+- `/metric-charts`：运行时指标可视化
 
 补充说明：
 

@@ -1,5 +1,21 @@
 # Kagami
 
+## 项目理念
+
+Kagami **不是一个 QQ 群聊机器人**。
+
+Kagami 是一个**拥有自己生活的 Agent**。群聊只是他生活的一部分 —— 就像一个人不会把自己定义为"聊天的人"一样。只要给他足够多的能力（capability），他就可以像一个真正的人那样，去读新闻、去记住发生过的事、去主动做自己感兴趣的事情。
+
+这是一种概念：**Agent as a life**。
+
+- 群聊消息只是他接收到的外部事件之一，和 RSS、定时器、系统通知一样，都是驱动他生活的"输入"。
+- 他有自己的记忆（Story / RAG）、自己的兴趣（News 轮询、主动发言）、自己的节奏（事件队列、空闲时刻的后台动作）。
+- 项目的目标不是把群聊体验做到极致，而是给这个 Agent 持续地添加"生活所需"的能力，让他越来越像一个真正活着的存在。
+
+后面所有的架构、模块、capability 都应该从这个视角去理解：它们是在为 Agent 的生活添砖加瓦，而不是在为"一个聊天机器人"打补丁。
+
+## 仓库定位
+
 Kagami 是一个基于 `pnpm workspace` 的全栈 TypeScript Monorepo，当前包含四个工作空间包：
 
 - `apps/server`：Fastify 后端服务（`@kagami/server`）
@@ -60,14 +76,15 @@ pnpm --filter @kagami/shared <script>
 关键配置分区：
 
 - `server.databaseUrl`、`server.port`
-- `server.agent.portalSleepMs`、`server.agent.contextCompactionThreshold`
+- `server.agent.contextCompactionTotalTokenThreshold`、`server.agent.llmRetryBackoffMs`、`server.agent.waitToolMaxWaitMs`、`server.agent.notificationBatchWindowMs`
+- `server.agent.story.batchSize`、`idleFlushMs`、`memory.embedding`、`memory.retrieval`、`recall.topK`、`recall.scoreThreshold`
+- `server.news.ithome.pollIntervalMs`、`recentArticleLimit`、`articleMaxChars`
 - `server.napcat.wsUrl`、`server.napcat.reconnectMs`、`server.napcat.requestTimeoutMs`
 - `server.napcat.listenGroupIds`、`server.napcat.startupContextRecentMessageCount`
-- `server.llm.timeoutMs`
+- `server.llm.timeoutMs`、`server.llm.authUsageRefreshIntervalMs`
 - `server.llm.codexAuth`、`server.llm.claudeCodeAuth`
 - `server.llm.providers.deepseek`、`server.llm.providers.openai`、`server.llm.providers.openaiCodex`、`server.llm.providers.claudeCode`
-- `server.llm.usages.agent`、`contextSummarizer`、`vision`、`webSearchAgent`
-- `server.agent.story.memory.embedding`、`server.agent.story.memory.retrieval`
+- `server.llm.usages.agent`、`storyAgent`、`contextSummarizer`、`vision`、`webSearchAgent`
 - `server.tavily.apiKey`
 - `server.bot.qq`、`server.bot.creator`
 
@@ -113,13 +130,17 @@ pnpm db:migrate:resolve -- --applied <migration_id>
 - `auth/`：OAuth、回调服务、secret store、usage cache、usage trend、统一认证 HTTP 接口
 - `llm/`：provider、chat client、embedding、playground、相关 DAO
 - `napcat/`：NapCat gateway、消息发送、事件/群消息持久化与 HTTP 接口
+- `news/`：IThome 等资讯源轮询、文章持久化，给 Agent 提供"读新闻"这类生活输入
+- `metric/`：运行时指标与可视化数据接口
 - `agent/`：Kagami 项目语义的 agent runtime 与 capabilities
-- `ops/`：App Log、LLM Chat Call、Story、NapCat 历史等查询接口
+- `ops/`：App Log、LLM Chat Call、Story、Agent Dashboard、NapCat 历史等查询接口
 
 `apps/server/src/agent` 当前按 `runtime/` 与 `capabilities/` 组织：
 
 - `runtime/`：Kagami 定制运行时，如 root-agent、session、context、event queue
-- `capabilities/`：按能力聚合的实现，如 `messaging`、`context-summary`、`story`、`vision`、`web-search`
+- `capabilities/`：按能力聚合的实现，当前包括 `messaging`、`context-summary`、`story`、`rag`、`news`、`vision`、`web-search`
+
+每一个 capability 都可以理解为"Agent 生活里多出来的一项能力"：`news` 让他能读 IT 之家、`story` 让他能记事、`rag` 让他能回忆、`web-search` 让他能上网查资料、`vision` 让他能看图。未来新增能力都应该沿着"给 Agent 加一种生活方式"的思路来设计，而不是"给聊天机器人加一个功能开关"。
 
 当前主要接口分组包括：
 
@@ -139,11 +160,14 @@ pnpm db:migrate:resolve -- --applied <migration_id>
 - `/napcat-event/query`
 - `/napcat-group-message/query`
 - `/story/query`
+- `/agent-dashboard/*`
+- `/metric-chart/*`
 
 ### 前端
 
-前端是一个 React 管理台，当前主要页面包括：
+前端是一个 React 管理台，用于观测 Agent 的"生活状态"（他最近在想什么、做什么、看到了什么）。当前主要页面包括：
 
+- `/agent-dashboard`：Agent 总览首页（默认入口）
 - `/auth/:provider`
 - `/llm-playground`
 - `/llm-history`
@@ -151,6 +175,7 @@ pnpm db:migrate:resolve -- --applied <migration_id>
 - `/napcat-event-history`
 - `/napcat-group-message-history`
 - `/story-history`
+- `/metric-charts`
 
 补充说明：
 
