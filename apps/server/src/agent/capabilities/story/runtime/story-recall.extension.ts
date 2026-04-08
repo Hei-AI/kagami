@@ -138,7 +138,7 @@ export class StoryRecallExtension implements LoopAgentExtension<
         tools: this.availableTools,
         toolChoice: { tool_name: "search_memory" },
       },
-      { usage: "agent", recordCall: false },
+      { usage: "agent" },
     );
 
     const toolCall = response.message.toolCalls?.[0];
