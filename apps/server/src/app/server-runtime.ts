@@ -446,6 +446,7 @@ export async function buildServerRuntime(): Promise<ServerRuntime> {
   const storyRecallExtension = new StoryRecallExtension({
     llmClient,
     storyRecallService,
+    availableTools: rootAgentTools.definitions(),
     topK: config.server.agent.story.recall.topK,
     scoreThreshold: config.server.agent.story.recall.scoreThreshold,
   });

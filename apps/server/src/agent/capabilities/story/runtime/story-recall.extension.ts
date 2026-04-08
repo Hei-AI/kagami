@@ -11,20 +11,6 @@ import { AppLogger } from "../../../../logger/logger.js";
 
 const logger = new AppLogger({ source: "agent.story-recall" });
 
-const SEARCH_MEMORY_TOOL_DEFINITION: Tool = {
-  name: "search_memory",
-  description: "当需要回忆之前经历过的人、事、新闻、结论或持续话题时，先搜索长期 story 记忆。",
-  parameters: {
-    type: "object",
-    properties: {
-      query: {
-        type: "string",
-        description: "用于回忆 story 的自然语言查询。",
-      },
-    },
-  },
-};
-
 const QUERY_GENERATION_INSTRUCTION = [
   "<system_instruction>",
   "请根据当前对话上下文，调用 search_memory 工具搜索可能相关的历史记忆。",
@@ -41,6 +27,7 @@ export class StoryRecallExtension implements LoopAgentExtension<
 > {
   private readonly llmClient: LlmClient;
   private readonly storyRecallService: StoryRecallService;
+  private readonly availableTools: Tool[];
   private readonly topK: number;
   private readonly scoreThreshold: number;
 
@@ -50,16 +37,19 @@ export class StoryRecallExtension implements LoopAgentExtension<
   public constructor({
     llmClient,
     storyRecallService,
+    availableTools,
     topK,
     scoreThreshold,
   }: {
     llmClient: LlmClient;
     storyRecallService: StoryRecallService;
+    availableTools: Tool[];
     topK: number;
     scoreThreshold: number;
   }) {
     this.llmClient = llmClient;
     this.storyRecallService = storyRecallService;
+    this.availableTools = availableTools;
     this.topK = topK;
     this.scoreThreshold = scoreThreshold;
   }
@@ -145,7 +135,7 @@ export class StoryRecallExtension implements LoopAgentExtension<
       {
         system: snapshot.systemPrompt,
         messages,
-        tools: [SEARCH_MEMORY_TOOL_DEFINITION],
+        tools: this.availableTools,
         toolChoice: { tool_name: "search_memory" },
       },
       { usage: "agent", recordCall: false },
