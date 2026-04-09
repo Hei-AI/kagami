@@ -55,7 +55,7 @@ import { SendMessageTool } from "../agent/capabilities/messaging/tools/send-mess
 import { DefaultAppLogQueryService } from "../ops/application/app-log-query.impl.service.js";
 import { DefaultAgentDashboardQueryService } from "../ops/application/agent-dashboard-query.impl.service.js";
 import { AuthUsageCacheManager } from "../auth/application/auth-usage-cache.impl.service.js";
-import { ClaudeCodeAuthRefreshScheduler } from "../auth/application/claude-code-auth-refresh.scheduler.js";
+import { OAuthAuthRefreshScheduler } from "../auth/application/oauth-auth-refresh.scheduler.js";
 import { DefaultLlmChatCallQueryService } from "../ops/application/llm-chat-call-query.impl.service.js";
 import { DefaultLlmPlaygroundService } from "../llm/application/llm-playground.impl.service.js";
 import { NapcatEventPersistenceWriter } from "../napcat/service/napcat-gateway/event-persistence-writer.js";
@@ -134,7 +134,7 @@ export type ServerRuntime = {
   ithomePoller: IthomePoller;
   callbackServers: Array<{ stop(): Promise<void> }>;
   authUsageCacheManager: AuthUsageCacheManager;
-  claudeCodeAuthRefreshScheduler: ClaudeCodeAuthRefreshScheduler;
+  authRefreshSchedulers: OAuthAuthRefreshScheduler[];
   rootAgentRuntime: RootLoopAgent;
   storyAgentRuntime: StoryLoopAgent;
   metricService: MetricService;
@@ -523,7 +523,7 @@ export async function buildServerRuntime(): Promise<ServerRuntime> {
     ithomePoller,
     callbackServers: authModule.callbackServers,
     authUsageCacheManager: authModule.authUsageCacheManager,
-    claudeCodeAuthRefreshScheduler: authModule.claudeCodeAuthRefreshScheduler,
+    authRefreshSchedulers: authModule.authRefreshSchedulers,
     rootAgentRuntime,
     storyAgentRuntime,
     metricService,

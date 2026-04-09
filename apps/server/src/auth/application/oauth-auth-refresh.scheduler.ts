@@ -1,21 +1,23 @@
 import { AppLogger } from "../../logger/logger.js";
 import { serializeError } from "../../logger/serializer.js";
-import type { ClaudeCodeAuthService } from "./claude-code-auth.service.js";
+import type { OAuthAuthService } from "./oauth-auth.service.js";
 
-const logger = new AppLogger({ source: "claude-code-auth-refresh-scheduler" });
+const logger = new AppLogger({ source: "oauth-auth-refresh-scheduler" });
 
-type ClaudeCodeAuthRefreshSchedulerDeps = {
-  claudeCodeAuthService: ClaudeCodeAuthService;
+type OAuthAuthRefreshSchedulerDeps = {
+  authService: OAuthAuthService;
+  displayName: string;
+  logEventPrefix: string;
   refreshCheckIntervalMs: number;
   refreshLeewayMs: number;
   now?: () => Date;
 };
 
-type ClaudeCodeAuthStatus = Awaited<ReturnType<ClaudeCodeAuthService["getStatus"]>>;
+type OAuthAuthStatus = Awaited<ReturnType<OAuthAuthService["getStatus"]>>;
 
-type PendingClaudeCodeRefreshContext = {
-  provider: ClaudeCodeAuthStatus["provider"];
-  authStatus: ClaudeCodeAuthStatus["status"];
+type PendingOAuthRefreshContext = {
+  provider: OAuthAuthStatus["provider"];
+  authStatus: OAuthAuthStatus["status"];
   session: {
     accountId: string | null;
     email: string | null;
@@ -27,8 +29,10 @@ type PendingClaudeCodeRefreshContext = {
   refreshLeewayMs: number;
 };
 
-export class ClaudeCodeAuthRefreshScheduler {
-  private readonly claudeCodeAuthService: ClaudeCodeAuthService;
+export class OAuthAuthRefreshScheduler {
+  private readonly authService: OAuthAuthService;
+  private readonly displayName: string;
+  private readonly logEventPrefix: string;
   private readonly refreshCheckIntervalMs: number;
   private readonly refreshLeewayMs: number;
   private readonly now: () => Date;
@@ -36,12 +40,16 @@ export class ClaudeCodeAuthRefreshScheduler {
   private refreshPromise: Promise<void> | null = null;
 
   public constructor({
-    claudeCodeAuthService,
+    authService,
+    displayName,
+    logEventPrefix,
     refreshCheckIntervalMs,
     refreshLeewayMs,
     now,
-  }: ClaudeCodeAuthRefreshSchedulerDeps) {
-    this.claudeCodeAuthService = claudeCodeAuthService;
+  }: OAuthAuthRefreshSchedulerDeps) {
+    this.authService = authService;
+    this.displayName = displayName;
+    this.logEventPrefix = logEventPrefix;
     this.refreshCheckIntervalMs = refreshCheckIntervalMs;
     this.refreshLeewayMs = refreshLeewayMs;
     this.now = now ?? (() => new Date());
@@ -88,12 +96,12 @@ export class ClaudeCodeAuthRefreshScheduler {
     }
   }
 
-  private async runRefresh(refreshContext: PendingClaudeCodeRefreshContext): Promise<void> {
+  private async runRefresh(refreshContext: PendingOAuthRefreshContext): Promise<void> {
     try {
-      await this.claudeCodeAuthService.refresh();
+      await this.authService.refresh();
     } catch (error) {
-      logger.warn("Failed to refresh Claude Code auth session", {
-        event: "claude_code_auth_refresh_scheduler.refresh_failed",
+      logger.warn(`Failed to refresh ${this.displayName} auth session`, {
+        event: `${this.logEventPrefix}.refresh_failed`,
         provider: refreshContext.provider,
         authStatus: refreshContext.authStatus,
         session: refreshContext.session,
@@ -104,8 +112,8 @@ export class ClaudeCodeAuthRefreshScheduler {
     }
   }
 
-  private async getPendingRefreshContext(): Promise<PendingClaudeCodeRefreshContext | null> {
-    const status = await this.claudeCodeAuthService.getStatus();
+  private async getPendingRefreshContext(): Promise<PendingOAuthRefreshContext | null> {
+    const status = await this.authService.getStatus();
     if ((status.status !== "active" && status.status !== "expired") || !status.session?.expiresAt) {
       return null;
     }

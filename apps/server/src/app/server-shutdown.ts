@@ -5,7 +5,7 @@ import { AppLogger } from "../logger/logger.js";
 import { getLoggerRuntime } from "../logger/runtime.js";
 import type { NapcatGatewayService } from "../napcat/service/napcat-gateway.service.js";
 import type { AuthUsageCacheManager } from "../auth/application/auth-usage-cache.impl.service.js";
-import type { ClaudeCodeAuthRefreshScheduler } from "../auth/application/claude-code-auth-refresh.scheduler.js";
+import type { OAuthAuthRefreshScheduler } from "../auth/application/oauth-auth-refresh.scheduler.js";
 import type { IthomePoller } from "../news/application/ithome-poller.js";
 
 export type AgentRuntimeController = {
@@ -27,7 +27,7 @@ type ShutdownServerResourcesOptions = {
   ithomePoller: IthomePoller | null;
   callbackServers: Array<{ stop(): Promise<void> }>;
   authUsageCacheManager: AuthUsageCacheManager | null;
-  claudeCodeAuthRefreshScheduler: ClaudeCodeAuthRefreshScheduler | null;
+  authRefreshSchedulers: OAuthAuthRefreshScheduler[];
   rootAgentRuntime: AgentRuntimeController | null;
   storyAgentRuntime: AgentRuntimeController | null;
   closeLlmProviders: (() => Promise<void>) | null;
@@ -51,7 +51,7 @@ export async function shutdownServerResources({
   ithomePoller,
   callbackServers,
   authUsageCacheManager,
-  claudeCodeAuthRefreshScheduler,
+  authRefreshSchedulers,
   rootAgentRuntime,
   storyAgentRuntime,
   closeLlmProviders,
@@ -112,10 +112,13 @@ export async function shutdownServerResources({
       });
     }
 
-    if (claudeCodeAuthRefreshScheduler) {
-      claudeCodeAuthRefreshScheduler.close();
-      shutdownLogger.info("Claude Code auth refresh scheduler closed", {
-        event: "server.shutdown.claude_code_auth_refresh_scheduler_closed",
+    for (const scheduler of authRefreshSchedulers) {
+      scheduler.close();
+    }
+    if (authRefreshSchedulers.length > 0) {
+      shutdownLogger.info("Auth refresh schedulers closed", {
+        event: "server.shutdown.auth_refresh_schedulers_closed",
+        count: authRefreshSchedulers.length,
       });
     }
 

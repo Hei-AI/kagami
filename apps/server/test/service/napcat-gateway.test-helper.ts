@@ -143,6 +143,7 @@ export function createConfigManager(): ConfigManager {
           oauthRedirectPath: "/auth/callback",
           oauthStateTtlMs: 600_000,
           refreshLeewayMs: 60_000,
+          refreshCheckIntervalMs: 60_000,
           binaryPath: "codex",
         },
         claudeCodeAuth: {

@@ -58,6 +58,11 @@ describe("shutdownServerResources", () => {
         order.push("authUsageCacheManager.close");
       }),
     };
+    const codexAuthRefreshScheduler = {
+      close: vi.fn(() => {
+        order.push("codexAuthRefreshScheduler.close");
+      }),
+    };
     const claudeCodeAuthRefreshScheduler = {
       close: vi.fn(() => {
         order.push("claudeCodeAuthRefreshScheduler.close");
@@ -88,7 +93,10 @@ describe("shutdownServerResources", () => {
       ithomePoller: ithomePoller as never,
       callbackServers: [callbackServer],
       authUsageCacheManager: authUsageCacheManager as never,
-      claudeCodeAuthRefreshScheduler: claudeCodeAuthRefreshScheduler as never,
+      authRefreshSchedulers: [
+        codexAuthRefreshScheduler as never,
+        claudeCodeAuthRefreshScheduler as never,
+      ],
       rootAgentRuntime,
       storyAgentRuntime,
       closeLlmProviders,
@@ -106,6 +114,7 @@ describe("shutdownServerResources", () => {
       "ithomePoller.close",
       "callbackServer.stop",
       "authUsageCacheManager.close",
+      "codexAuthRefreshScheduler.close",
       "claudeCodeAuthRefreshScheduler.close",
       "rootAgentRuntime.stop",
       "storyAgentRuntime.stop",
@@ -135,7 +144,7 @@ describe("shutdownServerResources", () => {
       ithomePoller: null,
       callbackServers: [],
       authUsageCacheManager: null,
-      claudeCodeAuthRefreshScheduler: null,
+      authRefreshSchedulers: [],
       rootAgentRuntime: null,
       storyAgentRuntime,
       closeLlmProviders: null,
@@ -168,7 +177,7 @@ describe("shutdownServerResources", () => {
       ithomePoller: null,
       callbackServers: [],
       authUsageCacheManager: null,
-      claudeCodeAuthRefreshScheduler: null,
+      authRefreshSchedulers: [],
       rootAgentRuntime,
       storyAgentRuntime: null,
       closeLlmProviders: null,
@@ -210,7 +219,7 @@ describe("shutdownServerResources", () => {
       ithomePoller: null,
       callbackServers: [],
       authUsageCacheManager: null,
-      claudeCodeAuthRefreshScheduler: null,
+      authRefreshSchedulers: [],
       rootAgentRuntime,
       storyAgentRuntime,
       closeLlmProviders,

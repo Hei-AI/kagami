@@ -41,6 +41,7 @@ server:
       oauthRedirectPath: /auth/callback
       oauthStateTtlMs: 600000
       refreshLeewayMs: 60000
+      refreshCheckIntervalMs: 60000
       binaryPath: codex
     claudeCodeAuth:
       enabled: true

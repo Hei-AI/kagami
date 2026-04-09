@@ -439,6 +439,44 @@ listenGroupIds:
     expect(config.server.llm.providers.claudeCode.keepAliveReplayIntervalMinutes).toBe(45);
   });
 
+  it("should default codex auth refresh check interval ms to 60000", async () => {
+    const configPath = await writeConfigFile(
+      buildConfigYaml(`
+wsUrl: wss://example.com/napcat
+reconnectMs: 3000
+requestTimeoutMs: 10000
+listenGroupIds:
+  - "123456"
+`),
+    );
+
+    const config = await loadStaticConfig({ configPath });
+
+    expect(config.server.llm.codexAuth.refreshCheckIntervalMs).toBe(60_000);
+  });
+
+  it("should allow overriding codex auth refresh check interval ms", async () => {
+    const configPath = await writeConfigFile(
+      buildConfigYaml(`
+wsUrl: wss://example.com/napcat
+reconnectMs: 3000
+requestTimeoutMs: 10000
+listenGroupIds:
+  - "123456"
+`).replace(
+        `    codexAuth:
+      publicBaseUrl: http://localhost:20004`,
+        `    codexAuth:
+      publicBaseUrl: http://localhost:20004
+      refreshCheckIntervalMs: 90000`,
+      ),
+    );
+
+    const config = await loadStaticConfig({ configPath });
+
+    expect(config.server.llm.codexAuth.refreshCheckIntervalMs).toBe(90_000);
+  });
+
   it("should default claude code auth refresh check interval ms to 300000", async () => {
     const configPath = await writeConfigFile(
       buildConfigYaml(`

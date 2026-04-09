@@ -5,7 +5,7 @@ import type { Database } from "../db/client.js";
 import { PrismaAuthUsageSnapshotDao } from "./dao/impl/auth-usage-snapshot.impl.dao.js";
 import { DefaultAuthUsageTrendQueryService } from "./application/auth-usage-trend-query.impl.service.js";
 import { AuthUsageCacheManager } from "./application/auth-usage-cache.impl.service.js";
-import { ClaudeCodeAuthRefreshScheduler } from "./application/claude-code-auth-refresh.scheduler.js";
+import { OAuthAuthRefreshScheduler } from "./application/oauth-auth-refresh.scheduler.js";
 import {
   buildClaudeCodeAuthorizeUrl,
   exchangeCodeForTokens as exchangeClaudeCodeTokens,
@@ -36,7 +36,7 @@ export type AuthModule = {
     "claude-code": OAuthAuthService<"claude-code">;
   };
   authUsageCacheManager: AuthUsageCacheManager;
-  claudeCodeAuthRefreshScheduler: ClaudeCodeAuthRefreshScheduler;
+  authRefreshSchedulers: OAuthAuthRefreshScheduler[];
   authHandler: AuthHandler;
   callbackServers: SharedOAuthCallbackServer<OAuthAuthService>[];
 };
@@ -67,6 +67,7 @@ export async function createAuthModule({
     internalProvider: "openai-codex",
     displayName: "Codex",
     managementPath: "/auth/codex",
+    autoRefreshOnGetAuth: false,
     dao: new PrismaOAuthDao({
       database,
       provider: "openai-codex",
@@ -144,8 +145,17 @@ export async function createAuthModule({
       }) satisfies AuthUsageLimitsResponse,
   });
   claudeCodeCallbackServer.setAuthService(claudeCodeAuthService);
-  const claudeCodeAuthRefreshScheduler = new ClaudeCodeAuthRefreshScheduler({
-    claudeCodeAuthService,
+  const codexAuthRefreshScheduler = new OAuthAuthRefreshScheduler({
+    authService: codexAuthService,
+    displayName: "Codex",
+    logEventPrefix: "codex_auth_refresh_scheduler",
+    refreshCheckIntervalMs: codexConfig.refreshCheckIntervalMs,
+    refreshLeewayMs: codexConfig.refreshLeewayMs,
+  });
+  const claudeCodeAuthRefreshScheduler = new OAuthAuthRefreshScheduler({
+    authService: claudeCodeAuthService,
+    displayName: "Claude Code",
+    logEventPrefix: "claude_code_auth_refresh_scheduler",
     refreshCheckIntervalMs: claudeCodeConfig.refreshCheckIntervalMs,
     refreshLeewayMs: claudeCodeConfig.refreshLeewayMs,
   });
@@ -169,6 +179,7 @@ export async function createAuthModule({
       limits: await authUsageCacheManager.getClaudeCodeUsageLimits(),
     };
   });
+  codexAuthRefreshScheduler.start();
   claudeCodeAuthRefreshScheduler.start();
   authUsageCacheManager.start();
 
@@ -180,7 +191,7 @@ export async function createAuthModule({
   return {
     authServices,
     authUsageCacheManager,
-    claudeCodeAuthRefreshScheduler,
+    authRefreshSchedulers: [codexAuthRefreshScheduler, claudeCodeAuthRefreshScheduler],
     authHandler: new AuthHandler({
       authServices,
       authUsageTrendQueryService,
