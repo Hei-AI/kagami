@@ -272,3 +272,23 @@ model NewsFeedCursor {
 
   @@map("news_feed_cursor")
 }
+
+model TerminalState {
+  id        Int      @id @default(autoincrement())
+  cwd       String
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@map("terminal_state")
+}
+
+model TerminalOutput {
+  id        Int      @id @default(autoincrement())
+  outputId  String   @unique(map: "terminal_output_output_id_uq") @map("output_id")
+  stdout    String   @db.Text
+  stderr    String   @db.Text
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  @@index([createdAt], map: "terminal_output_created_at_idx")
+  @@map("terminal_output")
+}

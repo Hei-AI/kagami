@@ -20,6 +20,7 @@ import type {
   NapcatPrivateMessageData,
 } from "../../../../napcat/service/napcat-gateway.service.js";
 import type { IthomeNewsService } from "../../../../news/application/ithome-news.service.js";
+import type { TerminalService } from "../../../capabilities/terminal/application/terminal.service.js";
 import { GroupChatState } from "./group-chat-state.js";
 import { PrivateChatState } from "./private-chat-state.js";
 import type {
@@ -28,7 +29,7 @@ import type {
   PersistedRootAgentSessionSnapshot,
 } from "../persistence/root-agent-runtime-snapshot.js";
 
-export const ROOT_AGENT_STATIC_STATE_IDS = ["portal", "ithome", "zone_out"] as const;
+export const ROOT_AGENT_STATIC_STATE_IDS = ["portal", "ithome", "zone_out", "terminal"] as const;
 export type RootAgentStaticStateId = (typeof ROOT_AGENT_STATIC_STATE_IDS)[number];
 export type RootAgentStateId =
   | RootAgentStaticStateId
@@ -41,6 +42,7 @@ export const ROOT_AGENT_INVOKE_TOOLS_BY_STATE = {
   qq_private: ["send_message"],
   ithome: ["open_ithome_article"],
   zone_out: ["zone_out"],
+  terminal: ["bash", "read_bash_output"],
 } as const;
 
 export type RootAgentInvokeToolName =
@@ -89,7 +91,10 @@ export type RootAgentSessionController = {
   enter(
     input:
       | { id: string }
-      | { kind: "qq_group" | "qq_private" | "ithome" | "zone_out"; id?: string },
+      | {
+          kind: "qq_group" | "qq_private" | "ithome" | "zone_out" | "terminal";
+          id?: string;
+        },
   ): Promise<Record<string, unknown>>;
   openIthomeArticle(input: { articleId: number }): Promise<Record<string, unknown>>;
   back(): Promise<Record<string, unknown>>;
@@ -103,6 +108,7 @@ type RootAgentSessionDeps = {
   recentMessageLimit: number;
   notificationTimeWindowMs?: number;
   ithomeNewsService?: Pick<IthomeNewsService, "getFeedOverview" | "enterFeed" | "openArticle">;
+  terminalService?: Pick<TerminalService, "getCwd">;
 };
 
 const DEFAULT_NOTIFICATION_TIME_WINDOW_MS = 30_000;
@@ -142,6 +148,7 @@ export class RootAgentSession implements RootAgentSessionController {
     IthomeNewsService,
     "getFeedOverview" | "enterFeed" | "openArticle"
   > | null;
+  public readonly terminalService: Pick<TerminalService, "getCwd"> | null;
   public readonly groupStates: GroupChatState[];
   public readonly groupStateById: Map<string, GroupChatState>;
   public readonly privateChatStates: PrivateChatState[] = [];
@@ -163,11 +170,13 @@ export class RootAgentSession implements RootAgentSessionController {
     recentMessageLimit,
     notificationTimeWindowMs,
     ithomeNewsService,
+    terminalService,
   }: RootAgentSessionDeps) {
     this.context = context;
     this.napcatGatewayService = napcatGatewayService;
     this.recentMessageLimit = recentMessageLimit;
     this.ithomeNewsService = ithomeNewsService ?? null;
+    this.terminalService = terminalService ?? null;
     this.notificationAccumulator = new NotificationAccumulator({
       timeWindowMs: notificationTimeWindowMs ?? DEFAULT_NOTIFICATION_TIME_WINDOW_MS,
     });
@@ -414,7 +423,10 @@ export class RootAgentSession implements RootAgentSessionController {
   public async enter(
     input:
       | { id: string }
-      | { kind: "qq_group" | "qq_private" | "ithome" | "zone_out"; id?: string },
+      | {
+          kind: "qq_group" | "qq_private" | "ithome" | "zone_out" | "terminal";
+          id?: string;
+        },
   ): Promise<Record<string, unknown>> {
     await this.initializeContext();
 
@@ -646,6 +658,10 @@ export class RootAgentSession implements RootAgentSessionController {
       return new ZoneOutState(this);
     }
 
+    if (stateId === "terminal") {
+      return this.terminalService ? new TerminalStateNode(this) : null;
+    }
+
     const groupId = parseGroupIdFromStateId(stateId);
     if (groupId && this.groupStateById.has(groupId)) {
       return new QqGroupState(this, groupId);
@@ -859,6 +875,9 @@ class PortalState implements RootAgentState {
       children.push(new IthomeState(this.session));
     }
     children.push(new ZoneOutState(this.session));
+    if (this.session.terminalService) {
+      children.push(new TerminalStateNode(this.session));
+    }
 
     return children;
   }
@@ -1246,6 +1265,53 @@ class ZoneOutState implements RootAgentState {
   }
 }
 
+class TerminalStateNode implements RootAgentState {
+  private readonly session: RootAgentSession;
+
+  public constructor(session: RootAgentSession) {
+    this.session = session;
+  }
+
+  public getId(): RootAgentStateId {
+    return "terminal";
+  }
+
+  public getDisplayName(): string {
+    return "终端";
+  }
+
+  public async getDescription(): Promise<string> {
+    const cwd = this.session.terminalService?.getCwd() ?? "(未初始化)";
+    return `你在终端里，当前目录：${cwd}`;
+  }
+
+  public async listChildren(): Promise<RootAgentState[]> {
+    return [];
+  }
+
+  public getAvailableInvokeTools(): RootAgentInvokeToolName[] {
+    return [...ROOT_AGENT_INVOKE_TOOLS_BY_STATE.terminal];
+  }
+
+  public async onFocus(): Promise<LlmMessage[]> {
+    return [];
+  }
+
+  public async onBlur(): Promise<LlmMessage[]> {
+    return [];
+  }
+
+  public async handleEvent(): Promise<RootAgentStateHandleEventResult> {
+    return {
+      shouldTriggerRound: false,
+    };
+  }
+
+  public buildNotificationSummary(): string | null {
+    return null;
+  }
+}
+
 function createQqGroupStateId(groupId: string): `qq_group:${string}` {
   return `qq_group:${groupId}`;
 }
@@ -1263,7 +1329,12 @@ function parsePrivateUserIdFromStateId(stateId: string): string | undefined {
 }
 
 function normalizeEnterInputToStateId(
-  input: { id: string } | { kind: "qq_group" | "qq_private" | "ithome" | "zone_out"; id?: string },
+  input:
+    | { id: string }
+    | {
+        kind: "qq_group" | "qq_private" | "ithome" | "zone_out" | "terminal";
+        id?: string;
+      },
 ): string | null {
   if ("kind" in input) {
     if (input.kind === "qq_group") {
@@ -1335,7 +1406,12 @@ function normalizeStateId(
   groupStateById: Map<string, GroupChatState>,
   knownPrivateUserIds: ReadonlySet<string>,
 ): RootAgentStateId | null {
-  if (stateId === "portal" || stateId === "ithome" || stateId === "zone_out") {
+  if (
+    stateId === "portal" ||
+    stateId === "ithome" ||
+    stateId === "zone_out" ||
+    stateId === "terminal"
+  ) {
     return stateId;
   }
 

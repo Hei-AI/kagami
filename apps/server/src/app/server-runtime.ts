@@ -88,6 +88,14 @@ import {
 import { VisionAgent } from "../agent/capabilities/vision/application/vision-agent.js";
 import { ZoneOutTool } from "../agent/runtime/root-agent/tools/zone-out.tool.js";
 import { OpenIthomeArticleTool } from "../agent/capabilities/news/tools/open-ithome-article.tool.js";
+import {
+  TerminalService,
+  resolveTerminalInitialCwd,
+} from "../agent/capabilities/terminal/application/terminal.service.js";
+import { PrismaTerminalStateDao } from "../agent/capabilities/terminal/infra/prisma-terminal-state.dao.js";
+import { PrismaTerminalOutputDao } from "../agent/capabilities/terminal/infra/prisma-terminal-output.dao.js";
+import { BashTool } from "../agent/capabilities/terminal/tools/bash.tool.js";
+import { ReadBashOutputTool } from "../agent/capabilities/terminal/tools/read-bash-output.tool.js";
 import { PrismaNewsArticleDao } from "../news/infra/prisma-news-article.dao.js";
 import { PrismaNewsFeedCursorDao } from "../news/infra/prisma-news-feed-cursor.dao.js";
 import { DefaultIthomeClient } from "../news/application/ithome-client.js";
@@ -355,12 +363,31 @@ export async function buildServerRuntime(): Promise<ServerRuntime> {
   const agentMessageService = new DefaultAgentMessageService({
     napcatGatewayService,
   });
+  const terminalStateDao = new PrismaTerminalStateDao({ database });
+  const terminalOutputDao = new PrismaTerminalOutputDao({ database });
+  const terminalConfig = config.server.agent.terminal;
+  const terminalService = new TerminalService({
+    config: {
+      initialCwd: resolveTerminalInitialCwd({ initialCwd: terminalConfig.initialCwd }),
+      commandTimeoutMs: terminalConfig.commandTimeoutMs,
+      previewBytes: terminalConfig.previewBytes,
+      maxOutputBytes: terminalConfig.maxOutputBytes,
+      maxCommandLength: terminalConfig.maxCommandLength,
+      readOutputMaxSize: terminalConfig.readOutputMaxSize,
+      shell: terminalConfig.shell,
+    },
+    terminalStateDao,
+    terminalOutputDao,
+  });
+  await terminalService.initialize();
   const invokeSubtools = [
     new SendMessageTool({
       agentMessageService,
     }),
     new ZoneOutTool(),
     new OpenIthomeArticleTool(),
+    new BashTool({ terminalService }),
+    new ReadBashOutputTool({ terminalService }),
   ];
   const agentSystemPromptFactory = async () => {
     return createAgentSystemPrompt({
@@ -389,6 +416,7 @@ export async function buildServerRuntime(): Promise<ServerRuntime> {
     recentMessageLimit: config.server.napcat.startupContextRecentMessageCount,
     notificationTimeWindowMs: config.server.agent.notificationBatchWindowMs,
     ithomeNewsService,
+    terminalService,
   });
   const toolCatalog = new ToolCatalog([
     new EnterTool(),

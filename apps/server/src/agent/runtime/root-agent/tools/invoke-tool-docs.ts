@@ -66,5 +66,9 @@ function getInvokeToolApplicableStateText(toolName: string): string {
     return "zone_out";
   }
 
+  if (toolName === "bash" || toolName === "read_bash_output") {
+    return "terminal";
+  }
+
   return "未知";
 }
