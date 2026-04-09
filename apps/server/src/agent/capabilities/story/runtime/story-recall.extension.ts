@@ -18,6 +18,13 @@ const QUERY_GENERATION_INSTRUCTION = [
   "</system_instruction>",
 ].join("\n");
 
+function formatRecallDate(date: Date): string {
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, "0");
+  const d = String(date.getDate()).padStart(2, "0");
+  return `${y}-${m}-${d}`;
+}
+
 export class StoryRecallExtension implements LoopAgentExtension<
   RootLoopExtensionContext,
   LlmMessage,
@@ -157,15 +164,12 @@ export class StoryRecallExtension implements LoopAgentExtension<
   private formatRecallMessage(
     results: Awaited<ReturnType<StoryRecallService["search"]>>,
   ): LlmMessage {
-    const parts = results.map(r => `## ${r.story.content.title}\n${r.story.markdown}`);
+    const parts = results.map(r => {
+      const date = formatRecallDate(r.story.createdAt);
+      return [`你想起了一件发生在 ${date} 的事情：`, "", r.story.markdown].join("\n");
+    });
 
-    const content = [
-      "<story_recall>",
-      "[自动记忆召回] 以下是与当前对话可能相关的历史记忆：",
-      "",
-      ...parts,
-      "</story_recall>",
-    ].join("\n");
+    const content = ["<story_recall>", ...parts, "</story_recall>"].join("\n");
 
     return { role: "user", content };
   }
