@@ -259,6 +259,26 @@ describe("TerminalService", () => {
       expect(service.getCwd()).toBe(tmpRoot);
     });
 
+    it("cd ~ resolves to home directory", async () => {
+      const { service } = await makeService({ initialCwd: tmpRoot });
+      const homedir = (await import("node:os")).default.homedir();
+      const result = await service.runBash({ command: "cd ~" });
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      expect(service.getCwd()).toBe(homedir);
+    });
+
+    it("cd ~/subdir resolves tilde BEFORE path.resolve (P1 fix)", async () => {
+      const homedir = (await import("node:os")).default.homedir();
+      const sub = path.join(homedir, "kagami");
+      // ~/kagami should exist because TerminalService.initialize creates it
+      const { service } = await makeService({ initialCwd: tmpRoot });
+      const result = await service.runBash({ command: "cd ~/kagami" });
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      expect(service.getCwd()).toBe(sub);
+    });
+
     it("multi-command (cd a && ls) is NOT intercepted and does not update state.cwd", async () => {
       const sub = path.join(tmpRoot, "multicd");
       const { mkdir } = await import("node:fs/promises");

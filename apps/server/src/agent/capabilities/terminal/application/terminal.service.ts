@@ -280,23 +280,24 @@ export class TerminalService {
     target: string | null;
   }): Promise<RunBashResult> {
     const start = Date.now();
-    const target = input.target ?? os.homedir();
-    const resolved = path.isAbsolute(target)
-      ? path.normalize(target)
-      : path.resolve(this.cwd, target);
-    const expanded = expandHome(resolved);
+    const rawTarget = input.target ?? os.homedir();
+    // 先展开 ~ 再 resolve，否则 path.resolve(cwd, "~/foo") 会产生 "{cwd}/~/foo"
+    const expanded = expandHome(rawTarget);
+    const resolved = path.isAbsolute(expanded)
+      ? path.normalize(expanded)
+      : path.resolve(this.cwd, expanded);
 
-    if (!(await isExistingDirectory(expanded))) {
+    if (!(await isExistingDirectory(resolved))) {
       return {
         ok: false,
         error: TERMINAL_ERROR.CWD_MISSING,
-        message: `目录不存在：${expanded}`,
+        message: `目录不存在：${resolved}`,
         cwd: this.cwd,
         durationMs: Date.now() - start,
       };
     }
 
-    this.cwd = expanded;
+    this.cwd = resolved;
     await this.terminalStateDao.saveCwd({ cwd: this.cwd });
     logger.debug("Terminal cwd updated via cd", {
       event: "agent.terminal.cd.ok",
@@ -418,64 +419,7 @@ export class TerminalService {
           stderrCapReached || Buffer.byteLength(sanitizedStderr, "utf8") > this.config.previewBytes;
         const durationMs = Date.now() - start;
 
-        if (timedOut) {
-          // 超时仍然尽力把 partial 存进 DB
-          (async () => {
-            let outputId: string | null = null;
-            if (sanitizedStdout.length > 0 || sanitizedStderr.length > 0) {
-              outputId = generateOutputId();
-              try {
-                await this.terminalOutputDao.save({
-                  outputId,
-                  stdout: sanitizedStdout,
-                  stderr: sanitizedStderr,
-                });
-              } catch (error) {
-                logger.errorWithCause("Failed to persist partial output on timeout", error, {
-                  event: "agent.terminal.runBash.save_partial_failed",
-                  outputId,
-                });
-                outputId = null;
-              }
-            }
-            logger.warn("Terminal bash timed out", {
-              event: "agent.terminal.runBash.timeout",
-              cwd: cwdAtStart,
-              command: truncateForLog(rawCommand),
-              durationMs,
-              outputId,
-            });
-            settle({
-              ok: false,
-              error: TERMINAL_ERROR.TIMEOUT,
-              message: `命令执行超过 ${this.config.commandTimeoutMs} ms，已被强制终止。`,
-              outputId,
-              stdoutPreview,
-              stderrPreview,
-              signal: signal ?? null,
-              exitCode: code,
-              cwd: cwdAtStart,
-              durationMs,
-            });
-          })().catch(() => {
-            settle({
-              ok: false,
-              error: TERMINAL_ERROR.TIMEOUT,
-              message: `命令执行超过 ${this.config.commandTimeoutMs} ms，已被强制终止。`,
-              outputId: null,
-              stdoutPreview,
-              stderrPreview,
-              signal: signal ?? null,
-              exitCode: code,
-              cwd: cwdAtStart,
-              durationMs,
-            });
-          });
-          return;
-        }
-
-        if (code === null && signal !== null) {
-          // 被信号杀死但不是 timeout
+        if (code === null && signal !== null && !timedOut) {
           logger.warn("Terminal bash killed by signal", {
             event: "agent.terminal.runBash.killed",
             cwd: cwdAtStart,
@@ -495,60 +439,139 @@ export class TerminalService {
           return;
         }
 
-        // 正常结束（exit code 可能非 0，但不是错误）
-        (async () => {
-          let outputId: string | null = null;
-          if (sanitizedStdout.length > 0 || sanitizedStderr.length > 0) {
-            outputId = generateOutputId();
-            try {
-              await this.terminalOutputDao.save({
-                outputId,
-                stdout: sanitizedStdout,
-                stderr: sanitizedStderr,
-              });
-            } catch (error) {
-              logger.errorWithCause("Failed to persist terminal output", error, {
-                event: "agent.terminal.runBash.save_failed",
-                outputId,
-              });
-              outputId = null;
-            }
-          }
-          logger.debug("Terminal bash ok", {
-            event: "agent.terminal.runBash.ok",
-            cwd: cwdAtStart,
-            command: truncateForLog(rawCommand),
-            exitCode: code ?? -1,
-            stdoutBytes: stdoutTotalBytes,
-            stderrBytes: stderrTotalBytes,
-            durationMs,
-            outputId,
-          });
-          settle({
-            ok: true,
-            exitCode: code ?? 0,
-            outputId,
-            stdoutPreview,
-            stdoutTruncated,
-            stdoutTotalBytes,
-            stderrPreview,
-            stderrTruncated,
-            stderrTotalBytes,
-            cwd: cwdAtStart,
-            durationMs,
-          });
-        })().catch(err => {
-          logger.errorWithCause("Unexpected error settling terminal bash result", err, {
-            event: "agent.terminal.runBash.settle_error",
-          });
-          settle({
-            ok: false,
-            error: TERMINAL_ERROR.SPAWN_FAILED,
-            message: "命令结果处理失败。",
-            cwd: cwdAtStart,
-            durationMs,
-          });
+        // 正常结束或超时——两条路径共享 persistOutput
+        this.persistAndSettle({
+          sanitizedStdout,
+          sanitizedStderr,
+          stdoutPreview,
+          stderrPreview,
+          stdoutTruncated,
+          stderrTruncated,
+          stdoutTotalBytes,
+          stderrTotalBytes,
+          code,
+          signal,
+          timedOut,
+          cwdAtStart,
+          rawCommand,
+          durationMs,
+          settle,
         });
+      });
+    });
+  }
+
+  private persistAndSettle(input: {
+    sanitizedStdout: string;
+    sanitizedStderr: string;
+    stdoutPreview: string;
+    stderrPreview: string;
+    stdoutTruncated: boolean;
+    stderrTruncated: boolean;
+    stdoutTotalBytes: number;
+    stderrTotalBytes: number;
+    code: number | null;
+    signal: string | null;
+    timedOut: boolean;
+    cwdAtStart: string;
+    rawCommand: string;
+    durationMs: number;
+    settle: (result: RunBashResult) => void;
+  }): void {
+    const {
+      sanitizedStdout,
+      sanitizedStderr,
+      stdoutPreview,
+      stderrPreview,
+      stdoutTruncated,
+      stderrTruncated,
+      stdoutTotalBytes,
+      stderrTotalBytes,
+      code,
+      signal,
+      timedOut,
+      cwdAtStart,
+      rawCommand,
+      durationMs,
+      settle,
+    } = input;
+
+    (async () => {
+      let outputId: string | null = null;
+      if (sanitizedStdout.length > 0 || sanitizedStderr.length > 0) {
+        outputId = generateOutputId();
+        try {
+          await this.terminalOutputDao.save({
+            outputId,
+            stdout: sanitizedStdout,
+            stderr: sanitizedStderr,
+          });
+        } catch (error) {
+          logger.errorWithCause("Failed to persist terminal output", error, {
+            event: timedOut
+              ? "agent.terminal.runBash.save_partial_failed"
+              : "agent.terminal.runBash.save_failed",
+            outputId,
+          });
+          outputId = null;
+        }
+      }
+
+      if (timedOut) {
+        logger.warn("Terminal bash timed out", {
+          event: "agent.terminal.runBash.timeout",
+          cwd: cwdAtStart,
+          command: truncateForLog(rawCommand),
+          durationMs,
+          outputId,
+        });
+        settle({
+          ok: false,
+          error: TERMINAL_ERROR.TIMEOUT,
+          message: `命令执行超过 ${this.config.commandTimeoutMs} ms，已被强制终止。`,
+          outputId,
+          stdoutPreview,
+          stderrPreview,
+          signal: signal ?? null,
+          exitCode: code,
+          cwd: cwdAtStart,
+          durationMs,
+        });
+      } else {
+        logger.debug("Terminal bash ok", {
+          event: "agent.terminal.runBash.ok",
+          cwd: cwdAtStart,
+          command: truncateForLog(rawCommand),
+          exitCode: code ?? -1,
+          stdoutBytes: stdoutTotalBytes,
+          stderrBytes: stderrTotalBytes,
+          durationMs,
+          outputId,
+        });
+        settle({
+          ok: true,
+          exitCode: code ?? 0,
+          outputId,
+          stdoutPreview,
+          stdoutTruncated,
+          stdoutTotalBytes,
+          stderrPreview,
+          stderrTruncated,
+          stderrTotalBytes,
+          cwd: cwdAtStart,
+          durationMs,
+        });
+      }
+    })().catch(err => {
+      logger.errorWithCause("Unexpected error settling terminal bash result", err, {
+        event: "agent.terminal.runBash.settle_error",
+      });
+      settle({
+        ok: false,
+        error: TERMINAL_ERROR.SPAWN_FAILED,
+        message: "命令结果处理失败。",
+        cwd: cwdAtStart,
+        durationMs,
       });
     });
   }
@@ -568,7 +591,8 @@ function expandHome(p: string): string {
   if (p.startsWith("~/")) {
     return path.join(os.homedir(), p.slice(2));
   }
-  return path.resolve(p);
+  // 非 tilde 路径原样返回，由调用方决定如何 resolve
+  return p;
 }
 
 async function isExistingDirectory(p: string): Promise<boolean> {

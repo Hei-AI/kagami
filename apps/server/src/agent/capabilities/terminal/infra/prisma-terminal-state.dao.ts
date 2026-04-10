@@ -8,41 +8,20 @@ export class PrismaTerminalStateDao implements TerminalStateDao {
     this.database = database;
   }
 
+  private static readonly SINGLETON_ID = 1;
+
   public async loadCwd(): Promise<string | null> {
-    const row = await this.database.terminalState.findFirst({
-      orderBy: {
-        id: "asc",
-      },
+    const row = await this.database.terminalState.findUnique({
+      where: { id: PrismaTerminalStateDao.SINGLETON_ID },
     });
     return row?.cwd ?? null;
   }
 
   public async saveCwd(input: { cwd: string }): Promise<void> {
-    const existing = await this.database.terminalState.findFirst({
-      orderBy: {
-        id: "asc",
-      },
-      select: {
-        id: true,
-      },
-    });
-
-    if (existing) {
-      await this.database.terminalState.update({
-        where: {
-          id: existing.id,
-        },
-        data: {
-          cwd: input.cwd,
-        },
-      });
-      return;
-    }
-
-    await this.database.terminalState.create({
-      data: {
-        cwd: input.cwd,
-      },
+    await this.database.terminalState.upsert({
+      where: { id: PrismaTerminalStateDao.SINGLETON_ID },
+      create: { id: PrismaTerminalStateDao.SINGLETON_ID, cwd: input.cwd },
+      update: { cwd: input.cwd },
     });
   }
 }
