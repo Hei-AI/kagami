@@ -237,7 +237,6 @@ export async function buildServerRuntime(): Promise<ServerRuntime> {
       });
     },
   });
-  ithomePoller.start();
   const napcatGatewayService = await DefaultNapcatGatewayService.create({
     configManager,
     enqueueGroupMessageEvent: event => eventQueue.enqueue(event),

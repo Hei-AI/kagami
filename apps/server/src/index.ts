@@ -129,6 +129,7 @@ try {
 
   await runtime.napcatGatewayService.start();
   await runtime.app.listen({ host: "0.0.0.0", port: runtime.port });
+  runtime.ithomePoller.start();
   isServerStarted = true;
 
   const providers = await runtime.listAvailableAgentProviders();
