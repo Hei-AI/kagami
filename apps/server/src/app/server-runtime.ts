@@ -1,10 +1,9 @@
 import { randomUUID } from "node:crypto";
 import Fastify, { type FastifyInstance } from "fastify";
 import { z } from "zod";
+import { InMemoryEventQueue } from "@kagami/agent-runtime";
 import { DefaultConfigManager } from "../config/config.impl.manager.js";
 import { loadStaticConfig } from "../config/config.loader.js";
-import { DefaultAgentContext } from "../agent/runtime/context/default-agent-context.js";
-import { LinearMessageLedgerAgentContext } from "../agent/runtime/context/linear-message-ledger-agent-context.js";
 import { createDbClient, type Database } from "../db/client.js";
 import { PrismaLlmChatCallDao } from "../llm/dao/impl/llm-chat-call.impl.dao.js";
 import { PrismaLogDao } from "../logger/dao/impl/log.impl.dao.js";
@@ -35,85 +34,26 @@ import { initLoggerRuntime, withTraceContext } from "../logger/runtime.js";
 import { DbLogSink } from "../logger/sinks/db-sink.js";
 import { StdoutLogSink } from "../logger/sinks/stdout-sink.js";
 import { createAuthModule } from "../auth/index.js";
-import { InMemoryEventQueue, ToolCatalog } from "@kagami/agent-runtime";
 import type { Event } from "../agent/runtime/event/event.js";
 import type { StoryAgentEvent } from "../agent/capabilities/story/runtime/story-event.js";
-import { RootLoopAgent } from "../agent/runtime/root-agent/root-agent-runtime.js";
-import { PrismaRootAgentRuntimeSnapshotRepository } from "../agent/runtime/root-agent/persistence/prisma-root-agent-runtime-snapshot.repository.js";
-import { ROOT_AGENT_RUNTIME_SNAPSHOT_RUNTIME_KEY } from "../agent/runtime/root-agent/persistence/root-agent-runtime-snapshot.repository.js";
-import { createAgentSystemPrompt } from "../agent/runtime/root-agent/system-prompt.js";
-import { RootAgentSession } from "../agent/runtime/root-agent/session/root-agent-session.js";
-import {
-  BackToPortalTool,
-  BACK_TO_PORTAL_TOOL_NAME,
-} from "../agent/runtime/root-agent/tools/back-to-portal.tool.js";
-import { EnterTool, ENTER_TOOL_NAME } from "../agent/runtime/root-agent/tools/enter.tool.js";
-import { InvokeTool, INVOKE_TOOL_NAME } from "../agent/runtime/root-agent/tools/invoke.tool.js";
-import { WaitTool, WAIT_TOOL_NAME } from "../agent/runtime/root-agent/tools/wait.tool.js";
-import { DefaultAgentMessageService } from "../agent/capabilities/messaging/application/default-agent-message.service.js";
-import { SendMessageTool } from "../agent/capabilities/messaging/tools/send-message.tool.js";
+import type { RootLoopAgent } from "../agent/runtime/root-agent/root-agent-runtime.js";
+import type { StoryLoopAgent } from "../agent/capabilities/story/runtime/story-agent.runtime.js";
 import { DefaultAppLogQueryService } from "../ops/application/app-log-query.impl.service.js";
-import { DefaultAgentDashboardQueryService } from "../ops/application/agent-dashboard-query.impl.service.js";
 import { AuthUsageCacheManager } from "../auth/application/auth-usage-cache.impl.service.js";
 import { OAuthAuthRefreshScheduler } from "../auth/application/oauth-auth-refresh.scheduler.js";
 import { DefaultLlmChatCallQueryService } from "../ops/application/llm-chat-call-query.impl.service.js";
-import { DefaultLlmPlaygroundService } from "../llm/application/llm-playground.impl.service.js";
 import { NapcatEventPersistenceWriter } from "../napcat/service/napcat-gateway/event-persistence-writer.js";
 import { DefaultNapcatImageMessageAnalyzer } from "../napcat/service/napcat-gateway/image-message-analyzer.js";
 import { DefaultNapcatGatewayService } from "../napcat/service/napcat-gateway.impl.service.js";
 import type { NapcatGatewayService } from "../napcat/service/napcat-gateway.service.js";
 import { DefaultNapcatEventQueryService } from "../ops/application/napcat-event-query.impl.service.js";
 import { DefaultNapcatQqMessageQueryService } from "../ops/application/napcat-group-message-query.impl.service.js";
-import { DefaultStoryQueryService } from "../ops/application/story-query.impl.service.js";
-import { DefaultStoryReindexService } from "../ops/application/story-reindex.impl.service.js";
-import { TavilyWebSearchService } from "../agent/capabilities/web-search/application/tavily-web-search.service.js";
-import {
-  SearchWebRawTool,
-  SEARCH_WEB_RAW_TOOL_NAME,
-} from "../agent/capabilities/web-search/task-agent/tools/search-web-raw.tool.js";
-import {
-  FinalizeWebSearchTool,
-  FINALIZE_WEB_SEARCH_TOOL_NAME,
-} from "../agent/capabilities/web-search/task-agent/tools/finalize-web-search.tool.js";
-import { WebSearchTaskAgent } from "../agent/capabilities/web-search/task-agent/web-search-task-agent.js";
-import {
-  SearchWebTool,
-  SEARCH_WEB_TOOL_NAME,
-} from "../agent/capabilities/web-search/tools/search-web.tool.js";
-import { ContextSummaryOperation } from "../agent/capabilities/context-summary/operations/context-summary.operation.js";
-import {
-  SummaryTool,
-  SUMMARY_TOOL_NAME,
-} from "../agent/capabilities/context-summary/tools/summary.tool.js";
 import { VisionAgent } from "../agent/capabilities/vision/application/vision-agent.js";
-import { ZoneOutTool } from "../agent/runtime/root-agent/tools/zone-out.tool.js";
-import { OpenIthomeArticleTool } from "../agent/capabilities/news/tools/open-ithome-article.tool.js";
-import {
-  TerminalService,
-  resolveTerminalInitialCwd,
-} from "../agent/capabilities/terminal/application/terminal.service.js";
-import { PrismaTerminalStateDao } from "../agent/capabilities/terminal/infra/prisma-terminal-state.dao.js";
-import { PrismaTerminalOutputDao } from "../agent/capabilities/terminal/infra/prisma-terminal-output.dao.js";
-import { BashTool } from "../agent/capabilities/terminal/tools/bash.tool.js";
-import { ReadBashOutputTool } from "../agent/capabilities/terminal/tools/read-bash-output.tool.js";
 import { PrismaNewsArticleDao } from "../news/infra/prisma-news-article.dao.js";
 import { PrismaNewsFeedCursorDao } from "../news/infra/prisma-news-feed-cursor.dao.js";
 import { DefaultIthomeClient } from "../news/application/ithome-client.js";
 import { IthomeNewsService } from "../news/application/ithome-news.service.js";
 import { IthomePoller } from "../news/application/ithome-poller.js";
-import { PrismaLinearMessageLedgerDao } from "../agent/capabilities/story/infra/impl/prisma-linear-message-ledger.impl.dao.js";
-import { PrismaStoryDao } from "../agent/capabilities/story/infra/impl/prisma-story.impl.dao.js";
-import { PrismaStoryMemoryDocumentDao } from "../agent/capabilities/story/infra/impl/prisma-story-memory-document.impl.dao.js";
-import { PrismaStoryAgentRuntimeSnapshotRepository } from "../agent/capabilities/story/runtime/persistence/prisma-story-agent-runtime-snapshot.repository.js";
-import { StoryMemoryIndexService } from "../agent/capabilities/story/application/story-memory-index.service.js";
-import { StoryRecallService } from "../agent/capabilities/story/application/story-recall.service.js";
-import { StoryService } from "../agent/capabilities/story/application/story.service.js";
-import { StoryLoopAgent } from "../agent/capabilities/story/runtime/story-agent.runtime.js";
-import { StoryRecallExtension } from "../agent/capabilities/story/runtime/story-recall.extension.js";
-import {
-  SearchMemoryTool,
-  SEARCH_MEMORY_TOOL_NAME,
-} from "../agent/capabilities/story/tools/search-memory.tool.js";
 import { StoryHandler } from "../ops/http/story.handler.js";
 import type { MetricService } from "../metric/application/metric.service.js";
 import { DefaultMetricService } from "../metric/application/metric.impl.service.js";
@@ -123,10 +63,7 @@ import { PrismaMetricDao } from "../metric/infra/impl/prisma-metric.impl.dao.js"
 import { PrismaMetricChartDao } from "../metric/infra/impl/prisma-metric-chart.impl.dao.js";
 import type { MetricChartDao } from "../metric/infra/metric-chart.dao.js";
 import { MetricChartHandler } from "../metric/http/metric-chart.handler.js";
-import {
-  createRootContextSummaryReminderMessage,
-  createStoryContextSummaryReminderMessage,
-} from "../agent/runtime/context/context-message-factory.js";
+import { buildAgentRuntime } from "./agent-runtime.factory.js";
 
 const TRACE_ID_HEADER_NAME = "X-Kagami-Trace-Id";
 const logger = new AppLogger({ source: "bootstrap" });
@@ -179,12 +116,6 @@ export async function buildServerRuntime(): Promise<ServerRuntime> {
     metricDao,
     metricChartDao,
   });
-  const rootAgentRuntimeSnapshotRepository = new PrismaRootAgentRuntimeSnapshotRepository({
-    database,
-  });
-  const storyAgentRuntimeSnapshotRepository = new PrismaStoryAgentRuntimeSnapshotRepository({
-    database,
-  });
   initLoggerRuntime({
     sinks: [new StdoutLogSink(), new DbLogSink({ logDao })],
   });
@@ -199,9 +130,6 @@ export async function buildServerRuntime(): Promise<ServerRuntime> {
   const newsArticleDao = new PrismaNewsArticleDao({ database });
   const newsFeedCursorDao = new PrismaNewsFeedCursorDao({ database });
   const embeddingCacheDao = new PrismaEmbeddingCacheDao({ database });
-  const linearMessageLedgerDao = new PrismaLinearMessageLedgerDao({ database });
-  const storyDao = new PrismaStoryDao({ database });
-  const storyMemoryDocumentDao = new PrismaStoryMemoryDocumentDao({ database });
   const llmChatCallQueryService = new DefaultLlmChatCallQueryService({
     llmChatCallDao,
   });
@@ -276,54 +204,11 @@ export async function buildServerRuntime(): Promise<ServerRuntime> {
     config: config.server.agent.story.memory.embedding,
     cacheDao: embeddingCacheDao,
   });
-  const storyMemoryIndexService = new StoryMemoryIndexService({
-    storyMemoryDocumentDao,
-    embeddingClient,
-    outputDimensionality: config.server.agent.story.memory.embedding.outputDimensionality,
-  });
-  const storyService = new StoryService({
-    storyDao,
-    storyMemoryIndexService,
-  });
-  const storyRecallService = new StoryRecallService({
-    storyMemoryDocumentDao,
-    storyDao,
-    embeddingClient,
-    embeddingModel: config.server.agent.story.memory.embedding.model,
-    outputDimensionality: config.server.agent.story.memory.embedding.outputDimensionality,
-  });
-  const storyQueryService = new DefaultStoryQueryService({
-    storyDao,
-    storyRecallService,
-  });
-  const storyReindexService = new DefaultStoryReindexService({
-    storyDao,
-    storyMemoryDocumentDao,
-    storyMemoryIndexService,
-    embeddingModel: config.server.agent.story.memory.embedding.model,
-    outputDimensionality: config.server.agent.story.memory.embedding.outputDimensionality,
-  });
   const visionAgent = new VisionAgent({
     llmClient,
   });
   const imageMessageAnalyzer = new DefaultNapcatImageMessageAnalyzer({
     visionAgent,
-  });
-  const webSearchService = new TavilyWebSearchService({
-    apiKey: config.server.tavily.apiKey,
-  });
-  const webSearchInternalToolCatalog = new ToolCatalog([
-    new SearchWebRawTool({
-      webSearchService,
-    }),
-    new FinalizeWebSearchTool(),
-  ]);
-  const webSearchTaskAgent = new WebSearchTaskAgent({
-    llmClient,
-    taskTools: webSearchInternalToolCatalog.pick([
-      SEARCH_WEB_RAW_TOOL_NAME,
-      FINALIZE_WEB_SEARCH_TOOL_NAME,
-    ]),
   });
   const napcatPersistenceWriter = new NapcatEventPersistenceWriter({
     napcatEventDao,
@@ -360,186 +245,36 @@ export async function buildServerRuntime(): Promise<ServerRuntime> {
     imageMessageAnalyzer,
     qqMessageDao: napcatQqMessageDao,
   });
-  const agentMessageService = new DefaultAgentMessageService({
+
+  const agentRuntime = await buildAgentRuntime({
+    config,
+    database,
+    llmClient,
+    embeddingClient,
+    metricService,
     napcatGatewayService,
-  });
-  const terminalStateDao = new PrismaTerminalStateDao({ database });
-  const terminalOutputDao = new PrismaTerminalOutputDao({ database });
-  const terminalConfig = config.server.agent.terminal;
-  const terminalService = new TerminalService({
-    config: {
-      initialCwd: resolveTerminalInitialCwd({ initialCwd: terminalConfig.initialCwd }),
-      commandTimeoutMs: terminalConfig.commandTimeoutMs,
-      previewBytes: terminalConfig.previewBytes,
-      maxOutputBytes: terminalConfig.maxOutputBytes,
-      maxCommandLength: terminalConfig.maxCommandLength,
-      readOutputMaxSize: terminalConfig.readOutputMaxSize,
-      shell: terminalConfig.shell,
-    },
-    terminalStateDao,
-    terminalOutputDao,
-  });
-  await terminalService.initialize();
-  const invokeSubtools = [
-    new SendMessageTool({
-      agentMessageService,
-    }),
-    new ZoneOutTool(),
-    new OpenIthomeArticleTool(),
-    new BashTool({ terminalService }),
-    new ReadBashOutputTool({ terminalService }),
-  ];
-  const agentSystemPromptFactory = async () => {
-    return createAgentSystemPrompt({
-      botQQ: config.server.bot.qq,
-      creatorName: config.server.bot.creator.name,
-      creatorQQ: config.server.bot.creator.qq,
-      invokeToolDefinitions: invokeSubtools.map(tool => tool.llmTool),
-    });
-  };
-  const context = new LinearMessageLedgerAgentContext({
-    inner: new DefaultAgentContext({
-      systemPromptFactory: agentSystemPromptFactory,
-    }),
-    linearMessageLedgerDao,
-    runtimeKey: ROOT_AGENT_RUNTIME_SNAPSHOT_RUNTIME_KEY,
-    onLedgerAppended: count => {
-      // Push a ledger_appended event to the story agent so it wakes up
-      // and reconsiders whether its pending batch is ready to flush.
-      storyEventQueue.enqueue({ type: "ledger_appended", count });
-    },
-  });
-  const rootAgentSession = new RootAgentSession({
-    context,
-    napcatGatewayService,
-    listenGroupIds: config.server.napcat.listenGroupIds,
-    recentMessageLimit: config.server.napcat.startupContextRecentMessageCount,
-    notificationTimeWindowMs: config.server.agent.notificationBatchWindowMs,
     ithomeNewsService,
-    terminalService,
-  });
-  const toolCatalog = new ToolCatalog([
-    new EnterTool(),
-    new BackToPortalTool(),
-    new WaitTool({
-      eventQueue,
-      maxWaitMs: config.server.agent.waitToolMaxWaitMs,
-    }),
-    new InvokeTool({
-      tools: invokeSubtools,
-    }),
-    new SearchWebTool({
-      webSearchTaskAgent,
-    }),
-    new SearchMemoryTool({
-      storyRecallService,
-      topK: config.server.agent.story.memory.retrieval.topK,
-    }),
-    new SummaryTool(),
-  ]);
-  const rootAgentTools = toolCatalog.pick([
-    ENTER_TOOL_NAME,
-    BACK_TO_PORTAL_TOOL_NAME,
-    WAIT_TOOL_NAME,
-    INVOKE_TOOL_NAME,
-    SEARCH_WEB_TOOL_NAME,
-    SEARCH_MEMORY_TOOL_NAME,
-  ]);
-  const summaryToolExecutor = toolCatalog.pick([SUMMARY_TOOL_NAME]);
-  const rootContextSummaryOperation = new ContextSummaryOperation({
-    llmClient,
-    summaryToolExecutor,
-    reminderMessageFactory: createRootContextSummaryReminderMessage,
-  });
-  const storyContextSummaryOperation = new ContextSummaryOperation({
-    llmClient,
-    summaryToolExecutor,
-    reminderMessageFactory: createStoryContextSummaryReminderMessage,
-  });
-  const storyAgentRuntime = new StoryLoopAgent({
-    llmClient,
-    linearMessageLedgerDao,
-    snapshotRepository: storyAgentRuntimeSnapshotRepository,
-    storyService,
-    contextSummaryOperation: storyContextSummaryOperation,
-    summaryTools: summaryToolExecutor.definitions(),
-    contextCompactionTotalTokenThreshold: config.server.agent.contextCompactionTotalTokenThreshold,
-    batchSize: config.server.agent.story.batchSize,
-    idleFlushMs: config.server.agent.story.idleFlushMs,
-    metricService,
-    llmRetryBackoffMs: config.server.agent.llmRetryBackoffMs,
-    sourceRuntimeKey: ROOT_AGENT_RUNTIME_SNAPSHOT_RUNTIME_KEY,
-    eventQueue: storyEventQueue,
-  });
-  const storyRecallExtension = new StoryRecallExtension({
-    llmClient,
-    storyRecallService,
-    availableTools: rootAgentTools.definitions(),
-    topK: config.server.agent.story.recall.topK,
-    scoreThreshold: config.server.agent.story.recall.scoreThreshold,
-  });
-  const rootAgentRuntime = new RootLoopAgent({
-    llmClient,
-    context,
     eventQueue,
-    session: rootAgentSession,
-    snapshotRepository: rootAgentRuntimeSnapshotRepository,
-    tools: rootAgentTools,
-    contextSummaryOperation: rootContextSummaryOperation,
-    contextCompactionTotalTokenThreshold: config.server.agent.contextCompactionTotalTokenThreshold,
-    metricService,
-    llmRetryBackoffMs: config.server.agent.llmRetryBackoffMs,
-    loopExtensions: [storyRecallExtension],
-    summaryTools: [
-      ...rootAgentTools.definitions(),
-      ...toolCatalog.pick([SUMMARY_TOOL_NAME]).definitions(),
-    ],
-  });
-  const restoredSnapshot = await rootAgentRuntimeSnapshotRepository.load(
-    ROOT_AGENT_RUNTIME_SNAPSHOT_RUNTIME_KEY,
-  );
-  let restoredRootAgentSnapshot = false;
-  if (restoredSnapshot) {
-    await rootAgentRuntime.restorePersistedSnapshot(restoredSnapshot);
-    restoredRootAgentSnapshot = true;
-  }
-  const llmPlaygroundService = new DefaultLlmPlaygroundService({
-    llmClient,
-    playgroundToolDefinitions: toolCatalog
-      .pick([
-        ENTER_TOOL_NAME,
-        WAIT_TOOL_NAME,
-        INVOKE_TOOL_NAME,
-        SEARCH_WEB_TOOL_NAME,
-        SEARCH_MEMORY_TOOL_NAME,
-        BACK_TO_PORTAL_TOOL_NAME,
-        SUMMARY_TOOL_NAME,
-      ])
-      .definitions(),
-  });
-  const agentDashboardQueryService = new DefaultAgentDashboardQueryService({
-    rootAgentRuntime,
-    storyAgentRuntime,
-    eventQueue,
-    listAvailableAgentProviders: async () => {
-      return await llmClient.listAvailableProviders({ usage: "agent" });
-    },
+    storyEventQueue,
   });
 
   const app = createServerApp({
     handlers: [
       new HealthHandler(),
       authModule.authHandler,
-      new LlmHandler({ llmPlaygroundService }),
+      new LlmHandler({ llmPlaygroundService: agentRuntime.llmPlaygroundService }),
       new AgentDashboardHandler({
-        agentDashboardQueryService,
+        agentDashboardQueryService: agentRuntime.agentDashboardQueryService,
       }),
       new LlmChatCallHandler({ llmChatCallQueryService }),
       new AppLogHandler({ appLogQueryService }),
       new MetricChartHandler({ metricChartService }),
       new NapcatEventHandler({ napcatEventQueryService }),
       new NapcatQqMessageHandler({ napcatQqMessageQueryService }),
-      new StoryHandler({ storyQueryService, storyReindexService }),
+      new StoryHandler({
+        storyQueryService: agentRuntime.storyQueryService,
+        storyReindexService: agentRuntime.storyReindexService,
+      }),
       new NapcatHandler({ napcatGatewayService }),
     ],
   });
@@ -552,27 +287,17 @@ export async function buildServerRuntime(): Promise<ServerRuntime> {
     callbackServers: authModule.callbackServers,
     authUsageCacheManager: authModule.authUsageCacheManager,
     authRefreshSchedulers: authModule.authRefreshSchedulers,
-    rootAgentRuntime,
-    storyAgentRuntime,
+    rootAgentRuntime: agentRuntime.rootAgentRuntime,
+    storyAgentRuntime: agentRuntime.storyAgentRuntime,
     metricService,
     metricChartService,
     metricChartDao,
-    restoredRootAgentSnapshot,
+    restoredRootAgentSnapshot: agentRuntime.restoredRootAgentSnapshot,
     port: config.server.port,
     listenGroupIds: config.server.napcat.listenGroupIds,
     startupContextRecentMessageCount: config.server.napcat.startupContextRecentMessageCount,
-    hydrateColdStartAgentContext: async () => {
-      const { hydrateStartupContextFromRecentMessages } =
-        await import("./startup-context-hydrator.js");
-
-      await hydrateStartupContextFromRecentMessages({
-        listenGroupIds: config.server.napcat.listenGroupIds,
-        startupContextRecentMessageCount: config.server.napcat.startupContextRecentMessageCount,
-        napcatGatewayService,
-        rootAgentRuntime,
-      });
-    },
-    hasTavilyApiKey: Boolean(config.server.tavily.apiKey),
+    hydrateColdStartAgentContext: agentRuntime.hydrateColdStartAgentContext,
+    hasTavilyApiKey: agentRuntime.hasTavilyApiKey,
     closeLlmProviders: async () => {
       await closeLlmProviders(llmProviders);
     },
